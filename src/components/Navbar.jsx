@@ -21,6 +21,11 @@ export default function Navbar({ collapsed, setCollapsed }) {
     { path: "/budget", label: "Budget", icon: <BookOpen size={20} /> },
     { path: "/goals", label: "Goals", icon: <Target size={20} /> },
     {
+      path: "/hutangpiutang",
+      label: "Hutang Piutang",
+      icon: <Handshake size={20} />,
+    },
+    {
       path: "/transaction",
       label: "Transaction",
       icon: <ListChecks size={20} />,

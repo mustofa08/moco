@@ -1,4 +1,3 @@
-// src/pages/Transaksi.jsx
 import { useEffect, useState, useMemo } from "react";
 import { supabase } from "../lib/supabaseClient";
 import {
@@ -46,13 +45,35 @@ export default function Transaction() {
         )
         .subscribe();
 
+      // also listen to debts/debt_payments because they can affect wallet choices or balances
+      const subs = [
+        supabase
+          .channel("debts")
+          .on(
+            "postgres_changes",
+            { event: "*", schema: "public", table: "debts" },
+            () => mounted && loadTransactions()
+          )
+          .subscribe(),
+        supabase
+          .channel("debt_payments")
+          .on(
+            "postgres_changes",
+            { event: "*", schema: "public", table: "debt_payments" },
+            () => mounted && loadTransactions()
+          )
+          .subscribe(),
+      ];
+
       return () => {
         mounted = false;
         supabase.removeChannel(channel);
+        subs.forEach((s) => supabase.removeChannel(s));
       };
     }
 
     init();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [month, year, search, walletFilter]);
 
   async function loadTransactions() {
@@ -137,7 +158,6 @@ export default function Transaction() {
 
   async function deleteTx(id) {
     if (!confirm("Hapus transaksi ini?")) return;
-
     try {
       await supabase.from("transactions").delete().eq("id", id);
       loadTransactions();
@@ -150,11 +170,9 @@ export default function Transaction() {
   const incomeSum = transactions
     .filter((t) => t.type === "income")
     .reduce((a, b) => a + Number(b.amount || 0), 0);
-
   const expenseSum = transactions
     .filter((t) => t.type === "expense")
     .reduce((a, b) => a + Number(b.amount || 0), 0);
-
   const netTotal = incomeSum - expenseSum;
 
   const walletOptions = useMemo(() => {
@@ -173,7 +191,6 @@ export default function Transaction() {
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-900 p-4">
-      {/* HEADER */}
       <div className="sticky top-0 pb-3 pt-2 bg-slate-50 dark:bg-slate-900 z-20">
         <div className="flex justify-between items-center">
           <button onClick={() => setMonth(month === 1 ? 12 : month - 1)}>
@@ -190,7 +207,6 @@ export default function Transaction() {
           </button>
         </div>
 
-        {/* SEARCH */}
         <div className="flex gap-3 mt-4">
           <div className="relative flex-1">
             <SearchIcon className="absolute left-3 top-2.5 text-slate-400" />
@@ -218,14 +234,12 @@ export default function Transaction() {
         </div>
       </div>
 
-      {/* SUMMARY */}
       <div className="flex justify-around bg-white dark:bg-slate-800 py-3 rounded-xl shadow mt-3">
         <Summary label="Income" color="text-blue-600" value={incomeSum} />
         <Summary label="Expense" color="text-red-500" value={expenseSum} />
         <Summary label="Total" color="dark:text-white" value={netTotal} />
       </div>
 
-      {/* LIST */}
       <div className="mt-6 space-y-6">
         {Object.entries(grouped).map(([date, txs]) => (
           <div key={date}>
@@ -294,7 +308,6 @@ export default function Transaction() {
         ))}
       </div>
 
-      {/* ADD BUTTON */}
       <button
         onClick={() => navigate("/transaction/add")}
         className="fixed bottom-20 right-4 bg-red-500 text-white p-4 rounded-full shadow-lg hover:bg-red-600 active:scale-95 transition z-50"

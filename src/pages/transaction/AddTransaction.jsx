@@ -1,3 +1,4 @@
+// src/pages/transaction/AddTransaction.jsx
 import React from "react";
 import TransactionForm from "../../components/forms/TransactionForm";
 import { useNavigate } from "react-router-dom";
@@ -22,11 +23,7 @@ export default function AddTransactionPage() {
           </h1>
         </div>
 
-        <TransactionForm
-          onSaved={() => {
-            navigate("/transaction");
-          }}
-        />
+        <TransactionForm onSaved={() => navigate("/transaction")} />
       </div>
     </div>
   );

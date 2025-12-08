@@ -1,6 +1,5 @@
 // src/pages/Wallets.jsx
 import { useEffect, useState } from "react";
-import Navbar from "../components/Navbar";
 import { supabase } from "../lib/supabaseClient";
 import { Plus } from "lucide-react";
 
@@ -13,72 +12,80 @@ export default function Wallets() {
   const [name, setName] = useState("");
 
   useEffect(() => {
+    let mounted = true;
     fetchWallets();
+
+    // subscribe to underlying tables so we can re-fetch the view when anything changes
+    const subs = [
+      supabase
+        .channel("wallets")
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "wallets" },
+          () => mounted && fetchWallets()
+        )
+        .subscribe(),
+      supabase
+        .channel("transactions")
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "transactions" },
+          () => mounted && fetchWallets()
+        )
+        .subscribe(),
+      supabase
+        .channel("debts")
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "debts" },
+          () => mounted && fetchWallets()
+        )
+        .subscribe(),
+      supabase
+        .channel("debt_payments")
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "debt_payments" },
+          () => mounted && fetchWallets()
+        )
+        .subscribe(),
+    ];
+
+    return () => {
+      mounted = false;
+      // remove channels
+      try {
+        subs.forEach((s) => supabase.removeChannel(s));
+      } catch (e) {}
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function fetchWallets() {
     setLoading(true);
-
     const userRes = await supabase.auth.getUser();
     const user = userRes?.data?.user;
-    if (!user) return;
+    if (!user) {
+      setLoading(false);
+      return;
+    }
 
-    // Ambil semua wallet user
-    const { data: walletData, error: walletErr } = await supabase
-      .from("wallets")
+    // NOTE: use wallet_balance_view instead of wallets table
+    const { data, error } = await supabase
+      .from("wallet_balance_view")
       .select("*")
       .eq("user_id", user.id)
-      .order("created_at");
+      .order("name", { ascending: true });
 
-    if (walletErr) {
-      console.error(walletErr);
-      setLoading(false);
-      return;
+    if (error) {
+      console.error("fetchWallets error:", error);
+      setWallets([]);
+    } else {
+      // view returns balance column — normalize object so UI uses same keys as previous code
+      setWallets(
+        (data || []).map((w) => ({ ...w, balance: Number(w.balance || 0) }))
+      );
     }
-
-    // Ambil semua transaksi user
-    const { data: txs, error: txErr } = await supabase
-      .from("transactions")
-      .select("*")
-      .eq("user_id", user.id);
-
-    if (txErr) {
-      console.error(txErr);
-      setLoading(false);
-      return;
-    }
-
-    // Hitung saldo otomatis
-    const updatedWallets = walletData.map((w) => {
-      let balance = 0;
-
-      // Income → tambah
-      txs
-        .filter((t) => t.type === "income" && t.wallet_id === w.id)
-        .forEach((t) => (balance += Number(t.amount)));
-
-      // Expense → kurang
-      txs
-        .filter((t) => t.type === "expense" && t.wallet_id === w.id)
-        .forEach((t) => (balance -= Number(t.amount)));
-
-      // Transfer keluar → kurang
-      txs
-        .filter((t) => t.type === "transfer" && t.transfer_from === w.id)
-        .forEach((t) => (balance -= Number(t.amount)));
-
-      // Transfer masuk → tambah
-      txs
-        .filter((t) => t.type === "transfer" && t.transfer_to_id === w.id)
-        .forEach((t) => (balance += Number(t.amount)));
-
-      return {
-        ...w,
-        balance,
-      };
-    });
-
-    setWallets(updatedWallets);
     setLoading(false);
   }
 
@@ -96,9 +103,13 @@ export default function Wallets() {
 
   async function deleteWallet(id) {
     if (!confirm("Hapus wallet ini?")) return;
-
-    await supabase.from("wallets").delete().eq("id", id);
-    fetchWallets();
+    try {
+      await supabase.from("wallets").delete().eq("id", id);
+      fetchWallets();
+    } catch (err) {
+      console.error(err);
+      alert("Gagal menghapus wallet");
+    }
   }
 
   async function saveWallet() {
@@ -113,20 +124,18 @@ export default function Wallets() {
 
     try {
       if (editingWallet) {
-        // Edit wallet
         await supabase
           .from("wallets")
           .update({ name: name.trim() })
           .eq("id", editingWallet.id);
       } else {
-        // Tambah wallet baru
         await supabase.from("wallets").insert({
           user_id: user.id,
           name: name.trim(),
           type: "default",
+          balance: 0,
         });
       }
-
       setModalOpen(false);
       fetchWallets();
     } catch (err) {
@@ -144,12 +153,11 @@ export default function Wallets() {
     <>
       <div className="min-h-screen bg-slate-50 p-6 ">
         <div className="mx-auto">
-          {/* HEADER */}
           <div className="flex justify-between items-center mb-6">
             <div>
               <h1 className="text-2xl font-semibold text-slate-900">Wallets</h1>
               <p className="text-slate-500 text-sm">
-                Semua saldo dihitung otomatis berdasarkan transaksi.
+                Saldo dihitung dari database (wallet_balance_view).
               </p>
             </div>
 
@@ -170,7 +178,6 @@ export default function Wallets() {
             </div>
           </div>
 
-          {/* WALLET LIST */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {loading ? (
               <div className="col-span-full text-center text-slate-500">
@@ -189,7 +196,7 @@ export default function Wallets() {
             ) : (
               wallets.map((w) => (
                 <div
-                  key={w.id}
+                  key={w.wallet_id || w.id}
                   className="bg-white border rounded-xl p-4 shadow-sm"
                 >
                   <div className="flex justify-between items-start">
@@ -197,7 +204,6 @@ export default function Wallets() {
                       <p className="text-xs text-slate-500">Wallet</p>
                       <h3 className="text-lg font-semibold">{w.name}</h3>
                     </div>
-
                     <div className="text-right">
                       <p className="text-xs text-slate-500">Saldo</p>
                       <p className="text-lg font-semibold">
@@ -208,13 +214,18 @@ export default function Wallets() {
 
                   <div className="flex gap-2 mt-4">
                     <button
-                      onClick={() => openEditWallet(w)}
+                      onClick={() =>
+                        openEditWallet({
+                          id: w.wallet_id || w.id,
+                          name: w.name,
+                        })
+                      }
                       className="px-3 py-2 text-sm bg-yellow-400 text-white rounded-lg"
                     >
                       Edit
                     </button>
                     <button
-                      onClick={() => deleteWallet(w.id)}
+                      onClick={() => deleteWallet(w.wallet_id || w.id)}
                       className="px-3 py-2 text-sm bg-red-500 text-white rounded-lg"
                     >
                       Hapus
@@ -227,7 +238,6 @@ export default function Wallets() {
         </div>
       </div>
 
-      {/* MODAL */}
       {modalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div
@@ -255,7 +265,6 @@ export default function Wallets() {
               >
                 Batal
               </button>
-
               <button
                 onClick={saveWallet}
                 className="px-3 py-2 bg-slate-900 text-white rounded"

@@ -28,11 +28,9 @@ export default function TransactionForm({
 
   const [loading, setLoading] = useState(false);
 
-  /* LOAD INITIAL */
   useEffect(() => {
     loadInitial();
   }, []);
-
   useEffect(() => {
     if (editId) loadEditData();
   }, [editId]);
@@ -41,13 +39,11 @@ export default function TransactionForm({
     const user = (await supabase.auth.getUser()).data.user;
     if (!user) return;
 
-    // Wallets
     const { data: w } = await supabase
       .from("wallets")
       .select("*")
       .eq("user_id", user.id)
       .order("created_at", { ascending: true });
-
     setWallets(w || []);
     if (w?.length) {
       setWalletId(w[0].id);
@@ -55,12 +51,10 @@ export default function TransactionForm({
       setTransferTo(w[1]?.id || w[0].id);
     }
 
-    // Categories
     const { data: cats } = await supabase
       .from("budget_categories")
       .select("*")
       .eq("user_id", user.id);
-
     setCategories(cats || []);
   }
 
@@ -74,7 +68,6 @@ export default function TransactionForm({
       .eq("id", editId)
       .eq("user_id", user.id)
       .single();
-
     if (!data) return;
 
     setDate(data.date);
@@ -97,22 +90,18 @@ export default function TransactionForm({
     }
   }
 
-  /* SUBCATEGORY LOADER */
   async function loadSubcategories(catId, keepSub = false) {
     setCategoryId(catId);
     if (!keepSub) setSubcategoryId("");
-
     const user = (await supabase.auth.getUser()).data.user;
     const { data: subs } = await supabase
       .from("budget_subcategories")
       .select("*")
       .eq("user_id", user.id)
       .eq("category_id", catId);
-
     setSubcategories(subs || []);
   }
 
-  /* AMOUNT FORMATTER */
   function onChangeAmount(e) {
     const cleaned = String(e.target.value || "").replace(/\D/g, "");
     setAmountDisplay(
@@ -123,7 +112,6 @@ export default function TransactionForm({
     return Number(String(text || "").replace(/\D/g, "")) || 0;
   }
 
-  /* SAVE HANDLER */
   async function handleSave() {
     const user = (await supabase.auth.getUser())?.data?.user;
     if (!user) return alert("User invalid");
@@ -134,15 +122,8 @@ export default function TransactionForm({
     setLoading(true);
 
     try {
-      /* MODE EDIT */
       if (editId) {
-        const payload = {
-          date,
-          amount: amountNum,
-          note,
-          type: tab,
-        };
-
+        const payload = { date, amount: amountNum, note, type: tab };
         if (tab === "transfer") {
           payload.transfer_from = transferFrom;
           payload.transfer_to_id = transferTo;
@@ -157,15 +138,12 @@ export default function TransactionForm({
           payload.subcategory_id =
             tab === "expense" ? subcategoryId || null : null;
         }
-
         await supabase.from("transactions").update(payload).eq("id", editId);
-
         onSaved();
         setLoading(false);
         return;
       }
 
-      /* CREATE */
       if (tab === "transfer") {
         await supabase.from("transactions").insert({
           user_id: user.id,
@@ -198,10 +176,8 @@ export default function TransactionForm({
     }
   }
 
-  /* UI */
   return (
     <div className="max-w-lg mx-auto">
-      {/* TAB SELECTOR */}
       <div className="flex gap-3 mb-4">
         {["income", "expense", "transfer"].map((t) => (
           <button
@@ -242,7 +218,6 @@ export default function TransactionForm({
           />
         </div>
 
-        {/* CATEGORY */}
         {tab !== "transfer" && (
           <>
             <label className="text-sm text-gray-500">Kategori</label>
@@ -264,7 +239,6 @@ export default function TransactionForm({
                 ))}
             </select>
 
-            {/* SUBCATEGORY */}
             {tab === "expense" && (
               <>
                 <label className="text-sm text-gray-500">Subkategori</label>
@@ -289,7 +263,6 @@ export default function TransactionForm({
           </>
         )}
 
-        {/* WALLET or TRANSFER */}
         <label className="text-sm text-gray-500">
           {tab === "transfer" ? "Dari" : "Wallet"}
         </label>
@@ -335,7 +308,6 @@ export default function TransactionForm({
           </select>
         )}
 
-        {/* NOTE */}
         <label className="text-sm text-gray-500">Catatan</label>
         <input
           value={note}
@@ -344,7 +316,6 @@ export default function TransactionForm({
           placeholder="contoh: gaji, makan malam"
         />
 
-        {/* BUTTON */}
         <button
           onClick={handleSave}
           disabled={loading}
