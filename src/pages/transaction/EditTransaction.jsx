@@ -8,18 +8,18 @@ export default function EditTransaction() {
   const navigate = useNavigate();
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 p-4">
+    <div className="min-h-screen bg-[#F3F7FA] p-4">
       <div className="max-w-3xl mx-auto mt-6">
-        <button
-          onClick={() => navigate(-1)}
-          className="p-2 rounded-md bg-white dark:bg-slate-800 shadow border hover:bg-gray-100 dark:hover:bg-slate-700"
-        >
-          <ArrowLeft size={20} className="text-gray-700 dark:text-white" />
-        </button>
+        <div className="flex items-center gap-3 mb-4">
+          <button
+            onClick={() => navigate(-1)}
+            className="p-2 rounded-xl bg-white shadow border hover:bg-slate-100"
+          >
+            <ArrowLeft size={20} className="text-slate-700" />
+          </button>
 
-        <h1 className="text-xl font-semibold mb-4 dark:text-white">
-          Edit Transaksi
-        </h1>
+          <h1 className="text-xl font-bold text-slate-800">Edit Transaksi</h1>
+        </div>
 
         <TransactionForm editId={id} onSaved={() => navigate(-1)} />
       </div>

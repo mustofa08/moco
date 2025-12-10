@@ -28,9 +28,13 @@ export default function TransactionForm({
 
   const [loading, setLoading] = useState(false);
 
+  /* ------------------------------------------
+      INITIAL LOAD
+  ------------------------------------------ */
   useEffect(() => {
     loadInitial();
   }, []);
+
   useEffect(() => {
     if (editId) loadEditData();
   }, [editId]);
@@ -43,7 +47,8 @@ export default function TransactionForm({
       .from("wallets")
       .select("*")
       .eq("user_id", user.id)
-      .order("created_at", { ascending: true });
+      .order("created_at");
+
     setWallets(w || []);
     if (w?.length) {
       setWalletId(w[0].id);
@@ -55,6 +60,7 @@ export default function TransactionForm({
       .from("budget_categories")
       .select("*")
       .eq("user_id", user.id);
+
     setCategories(cats || []);
   }
 
@@ -66,16 +72,14 @@ export default function TransactionForm({
       .from("transactions")
       .select("*")
       .eq("id", editId)
-      .eq("user_id", user.id)
       .single();
+
     if (!data) return;
 
-    setDate(data.date);
-    setAmountDisplay(
-      data.amount ? new Intl.NumberFormat("id-ID").format(data.amount) : ""
-    );
-    setNote(data.note || "");
     setTab(data.type);
+    setDate(data.date);
+    setAmountDisplay(new Intl.NumberFormat("id-ID").format(data.amount));
+    setNote(data.note || "");
 
     if (data.type === "transfer") {
       setTransferFrom(data.transfer_from);
@@ -90,144 +94,165 @@ export default function TransactionForm({
     }
   }
 
-  async function loadSubcategories(catId, keepSub = false) {
+  /* ------------------------------------------
+      SUBCATEGORY FETCH
+  ------------------------------------------ */
+  async function loadSubcategories(catId, keep = false) {
     setCategoryId(catId);
-    if (!keepSub) setSubcategoryId("");
+    if (!keep) setSubcategoryId("");
+
     const user = (await supabase.auth.getUser()).data.user;
-    const { data: subs } = await supabase
+
+    const { data } = await supabase
       .from("budget_subcategories")
       .select("*")
       .eq("user_id", user.id)
       .eq("category_id", catId);
-    setSubcategories(subs || []);
+
+    setSubcategories(data || []);
   }
 
+  /* ------------------------------------------
+      AMOUNT
+  ------------------------------------------ */
   function onChangeAmount(e) {
-    const cleaned = String(e.target.value || "").replace(/\D/g, "");
+    const cleaned = String(e.target.value).replace(/\D/g, "");
     setAmountDisplay(
       cleaned ? new Intl.NumberFormat("id-ID").format(Number(cleaned)) : ""
     );
   }
-  function parseNumber(text) {
-    return Number(String(text || "").replace(/\D/g, "")) || 0;
+
+  function parseNumber(str) {
+    return Number(String(str || "").replace(/\D/g, "")) || 0;
   }
 
+  /* ------------------------------------------
+      SAVE
+  ------------------------------------------ */
   async function handleSave() {
-    const user = (await supabase.auth.getUser())?.data?.user;
-    if (!user) return alert("User invalid");
+    const user = (await supabase.auth.getUser()).data.user;
+    if (!user) return;
 
-    const amountNum = parseNumber(amountDisplay);
-    if (amountNum <= 0) return alert("Nominal tidak valid");
+    const amount = parseNumber(amountDisplay);
+    if (!amount) return alert("Nominal tidak valid");
 
     setLoading(true);
 
+    const payload = {
+      user_id: user.id,
+      date,
+      amount,
+      note,
+      type: tab,
+    };
+
+    if (tab === "transfer") {
+      payload.transfer_from = transferFrom;
+      payload.transfer_to_id = transferTo;
+      payload.wallet_id = null;
+      payload.category_id = null;
+      payload.subcategory_id = null;
+    } else {
+      payload.wallet_id = walletId;
+      payload.category_id = categoryId || null;
+      payload.subcategory_id = tab === "expense" ? subcategoryId || null : null;
+    }
+
     try {
       if (editId) {
-        const payload = { date, amount: amountNum, note, type: tab };
-        if (tab === "transfer") {
-          payload.transfer_from = transferFrom;
-          payload.transfer_to_id = transferTo;
-          payload.wallet_id = null;
-          payload.category_id = null;
-          payload.subcategory_id = null;
-        } else {
-          payload.wallet_id = walletId;
-          payload.transfer_from = null;
-          payload.transfer_to_id = null;
-          payload.category_id = categoryId || null;
-          payload.subcategory_id =
-            tab === "expense" ? subcategoryId || null : null;
-        }
         await supabase.from("transactions").update(payload).eq("id", editId);
-        onSaved();
-        setLoading(false);
-        return;
-      }
-
-      if (tab === "transfer") {
-        await supabase.from("transactions").insert({
-          user_id: user.id,
-          date,
-          type: "transfer",
-          amount: amountNum,
-          note: note || "Transfer",
-          transfer_from: transferFrom,
-          transfer_to_id: transferTo,
-        });
       } else {
-        await supabase.from("transactions").insert({
-          user_id: user.id,
-          date,
-          type: tab,
-          amount: amountNum,
-          note,
-          wallet_id: walletId,
-          category_id: categoryId || null,
-          subcategory_id: tab === "expense" ? subcategoryId || null : null,
-        });
+        await supabase.from("transactions").insert(payload);
       }
 
       onSaved();
     } catch (err) {
-      console.error("handleSave error", err);
+      console.error(err);
       alert("Gagal menyimpan transaksi");
     } finally {
       setLoading(false);
     }
   }
 
+  /* ------------------------------------------
+      TAB ACTIVE BG COLORS
+  ------------------------------------------ */
+  const activeColor = {
+    income: "bg-green-100 text-green-700",
+    expense: "bg-red-100 text-red-700",
+    transfer: "bg-blue-100 text-blue-700",
+  };
+
   return (
-    <div className="max-w-lg mx-auto">
-      <div className="flex gap-3 mb-4">
-        {["income", "expense", "transfer"].map((t) => (
+    <div className="max-w-lg mx-auto mt-3 pb-10">
+      {/* ---------- SEGMENTED TABS ---------- */}
+      <div className="flex bg-white rounded-xl shadow p-1 mb-5 border">
+        {[
+          { key: "income", label: "Income" },
+          { key: "expense", label: "Expense" },
+          { key: "transfer", label: "Transfer" },
+        ].map((t) => (
           <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`flex-1 py-2 rounded-md border text-sm ${
-              tab === t
-                ? t === "income"
-                  ? "bg-blue-500 text-white"
-                  : t === "expense"
-                  ? "bg-red-500 text-white"
-                  : "bg-gray-600 text-white"
-                : "bg-white text-gray-600"
-            }`}
+            key={t.key}
+            onClick={() => setTab(t.key)}
+            className={`
+              flex-1 py-2 rounded-lg text-sm font-medium transition
+              ${
+                tab === t.key
+                  ? `${activeColor[t.key]} shadow`
+                  : "text-slate-600"
+              }
+            `}
           >
-            {t.toUpperCase()}
+            {t.label}
           </button>
         ))}
       </div>
 
-      <div className="bg-white border rounded-xl p-4 shadow-sm">
-        <label className="text-sm text-gray-500">Tanggal</label>
-        <input
-          type="date"
-          value={date}
-          onChange={(e) => setDate(e.target.value)}
-          className="w-full border-b py-2 mb-3 bg-transparent"
-        />
-
-        <label className="text-sm text-gray-500">Nominal</label>
-        <div className="border-b py-2 mb-3 flex items-center">
-          <span className="mr-3">Rp</span>
+      {/* ---------- FORM CARD ---------- */}
+      <div className="p-5 rounded-2xl shadow border bg-white space-y-4">
+        {/* DATE */}
+        <div>
+          <label className="text-sm text-slate-600">Tanggal</label>
           <input
-            value={amountDisplay}
-            onChange={onChangeAmount}
-            inputMode="numeric"
-            className="w-full text-right bg-transparent"
+            type="date"
+            value={date}
+            onChange={(e) => setDate(e.target.value)}
+            className="w-full mt-1 px-3 py-2 rounded-lg border bg-slate-50"
           />
         </div>
 
+        {/* NOMINAL */}
+        <div>
+          <label className="text-sm text-slate-600">Nominal</label>
+          <div className="relative mt-1">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
+              Rp
+            </span>
+            <input
+              value={amountDisplay}
+              onChange={onChangeAmount}
+              inputMode="numeric"
+              className="
+                w-full pl-10 pr-3 py-2 rounded-lg border bg-slate-50 
+                text-right font-medium text-slate-700 focus:outline-none
+              "
+              placeholder="0"
+            />
+          </div>
+        </div>
+
+        {/* CATEGORY */}
         {tab !== "transfer" && (
-          <>
-            <label className="text-sm text-gray-500">Kategori</label>
+          <div>
+            <label className="text-sm text-slate-600">Kategori</label>
             <select
               value={categoryId}
               onChange={(e) => {
                 setCategoryId(e.target.value);
                 if (tab === "expense") loadSubcategories(e.target.value);
               }}
-              className="w-full border rounded-lg px-3 py-2 mb-3"
+              className="w-full mt-1 px-3 py-2 rounded-lg border bg-slate-50"
             >
               <option value="">Pilih kategori</option>
               {categories
@@ -238,90 +263,104 @@ export default function TransactionForm({
                   </option>
                 ))}
             </select>
-
-            {tab === "expense" && (
-              <>
-                <label className="text-sm text-gray-500">Subkategori</label>
-                <select
-                  value={subcategoryId}
-                  onChange={(e) => setSubcategoryId(e.target.value)}
-                  className="w-full border rounded-lg px-3 py-2 mb-3"
-                >
-                  <option value="">
-                    {subcategories.length
-                      ? "Pilih subkategori"
-                      : "Tidak ada subkategori"}
-                  </option>
-                  {subcategories.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
-                </select>
-              </>
-            )}
-          </>
+          </div>
         )}
 
-        <label className="text-sm text-gray-500">
-          {tab === "transfer" ? "Dari" : "Wallet"}
-        </label>
-
-        {tab === "transfer" ? (
-          <>
+        {/* SUBCATEGORY */}
+        {tab === "expense" && (
+          <div>
+            <label className="text-sm text-slate-600">Subkategori</label>
             <select
-              value={transferFrom}
-              onChange={(e) => setTransferFrom(e.target.value)}
-              className="w-full border rounded-lg px-3 py-2 mb-3"
+              value={subcategoryId}
+              onChange={(e) => setSubcategoryId(e.target.value)}
+              className="w-full mt-1 px-3 py-2 rounded-lg border bg-slate-50"
             >
-              {wallets.map((w) => (
-                <option key={w.id} value={w.id}>
-                  {w.name}
-                </option>
-              ))}
-            </select>
-
-            <label className="text-sm text-gray-500">Ke</label>
-            <select
-              value={transferTo}
-              onChange={(e) => setTransferTo(e.target.value)}
-              className="w-full border rounded-lg px-3 py-2 mb-3"
-            >
-              {wallets.map((w) => (
-                <option key={w.id} value={w.id}>
-                  {w.name}
-                </option>
-              ))}
-            </select>
-          </>
-        ) : (
-          <select
-            value={walletId}
-            onChange={(e) => setWalletId(e.target.value)}
-            className="w-full border rounded-lg px-3 py-2 mb-3"
-          >
-            {wallets.map((w) => (
-              <option key={w.id} value={w.id}>
-                {w.name}
+              <option value="">
+                {subcategories.length
+                  ? "Pilih subkategori"
+                  : "Tidak ada subkategori"}
               </option>
-            ))}
-          </select>
+              {subcategories.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          </div>
         )}
 
-        <label className="text-sm text-gray-500">Catatan</label>
-        <input
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-          className="w-full border rounded-lg px-3 py-2 mb-3"
-          placeholder="contoh: gaji, makan malam"
-        />
+        {/* WALLET / TRANSFER */}
+        <div>
+          <label className="text-sm text-slate-600">
+            {tab === "transfer" ? "Transfer Dari" : "Wallet"}
+          </label>
 
+          {tab === "transfer" ? (
+            <>
+              <select
+                value={transferFrom}
+                onChange={(e) => setTransferFrom(e.target.value)}
+                className="w-full mt-1 px-3 py-2 rounded-lg border bg-slate-50"
+              >
+                {wallets.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.name}
+                  </option>
+                ))}
+              </select>
+
+              <label className="text-sm text-slate-600 mt-3 block">
+                Transfer Ke
+              </label>
+
+              <select
+                value={transferTo}
+                onChange={(e) => setTransferTo(e.target.value)}
+                className="w-full mt-1 px-3 py-2 rounded-lg border bg-slate-50"
+              >
+                {wallets.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.name}
+                  </option>
+                ))}
+              </select>
+            </>
+          ) : (
+            <select
+              value={walletId}
+              onChange={(e) => setWalletId(e.target.value)}
+              className="w-full mt-1 px-3 py-2 rounded-lg border bg-slate-50"
+            >
+              {wallets.map((w) => (
+                <option key={w.id} value={w.id}>
+                  {w.name}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+
+        {/* NOTE */}
+        <div>
+          <label className="text-sm text-slate-600">Catatan</label>
+          <input
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="contoh: makan malam, gaji, bensin"
+            className="w-full mt-1 px-3 py-2 rounded-lg border bg-slate-50"
+          />
+        </div>
+
+        {/* SAVE BUTTON */}
         <button
           onClick={handleSave}
           disabled={loading}
-          className="w-full py-3 rounded-lg text-white bg-indigo-600 hover:bg-indigo-700"
+          className="
+            w-full py-3 rounded-xl bg-[#052A3D] text-white 
+            font-semibold hover:bg-[#083a52] transition
+          "
         >
-          {loading ? "Saving..." : editId ? "Update" : "Save"}
+          {loading ? "Menyimpan..." : editId ? "Update" : "Simpan"}
         </button>
       </div>
     </div>

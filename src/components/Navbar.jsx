@@ -1,4 +1,5 @@
 // src/components/Navbar.jsx
+
 import {
   Home,
   BookOpen,
@@ -15,14 +16,20 @@ import { Link, useLocation } from "react-router-dom";
 export default function Navbar({ collapsed, setCollapsed }) {
   const location = useLocation();
 
+  // Fintech Premium Color Theme (Option B)
+  const BG_NAVY = "bg-[#052A3D]";
+  const ACTIVE_COLOR = "text-[#19D1E6]"; // Cyan Premium
+  const INACTIVE_COLOR = "text-[#86A7B3]"; // Soft Slate
+  const HOVER_COLOR = "hover:bg-[#07344A]"; // Slightly brighter teal navy
+
   const items = [
     { path: "/home", label: "Home", icon: <Home size={20} /> },
     { path: "/wallets", label: "Wallets", icon: <Wallet size={20} /> },
     { path: "/budget", label: "Budget", icon: <BookOpen size={20} /> },
     { path: "/goals", label: "Goals", icon: <Target size={20} /> },
     {
-      path: "/hutangpiutang",
-      label: "Hutang Piutang",
+      path: "/loan",
+      label: "Loan",
       icon: <Handshake size={20} />,
     },
     {
@@ -34,59 +41,69 @@ export default function Navbar({ collapsed, setCollapsed }) {
 
   return (
     <>
-      {/* MOBILE */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-blue-950 p-2 shadow-lg rounded-t-xl z-40 lg:hidden">
+      {/* ----------------------- MOBILE NAV ------------------------ */}
+      <nav
+        className={`fixed bottom-0 left-0 right-0 ${BG_NAVY} p-2 rounded-t-xl shadow-lg z-40 lg:hidden`}
+      >
         <div className="flex justify-around items-center">
-          {items.map((it) => (
-            <Link
-              key={it.path}
-              to={it.path}
-              className={`flex flex-col items-center text-xs ${
-                location.pathname === it.path
-                  ? "text-yellow-500"
-                  : "text-slate-400"
-              }`}
-            >
-              {it.icon}
-              <span>{it.label}</span>
-            </Link>
-          ))}
+          {items.map((it) => {
+            const isActive = location.pathname === it.path;
+            return (
+              <Link
+                key={it.path}
+                to={it.path}
+                className={`flex flex-col items-center text-xs transition 
+                  ${isActive ? ACTIVE_COLOR : INACTIVE_COLOR}`}
+              >
+                {it.icon}
+                <span>{it.label}</span>
+              </Link>
+            );
+          })}
         </div>
       </nav>
 
-      {/* DESKTOP */}
+      {/* ----------------------- DESKTOP NAV ------------------------ */}
       <nav
-        className={`hidden lg:flex flex-col h-screen fixed left-0 top-0 bg-blue-950 border-r border-slate-700 shadow-sm transition-all duration-300 ${
-          collapsed ? "w-20" : "w-64"
-        }`}
+        className={`hidden lg:flex flex-col h-screen fixed left-0 top-0 
+          ${BG_NAVY} border-r border-[#0B3B50] shadow-xl 
+          transition-all duration-300
+          ${collapsed ? "w-20" : "w-64"}`}
       >
+        {/* Logo + Collapse Button */}
         <div className="flex items-center justify-between px-5 py-6">
           {!collapsed && (
-            <h1 className="text-2xl font-bold tracking-tight text-slate-100">
-              <span className="text-yellow-500">mo</span>co
+            <h1 className="text-2xl font-bold tracking-tight text-white">
+              <span className="text-[#19D1E6]">mo</span>co
             </h1>
           )}
 
           <button
             onClick={() => setCollapsed((v) => !v)}
-            className="text-yellow-500 bg-blue-900 hover:bg-blue-800 p-2 rounded-lg transition"
+            className="text-[#19D1E6] bg-[#07344A] hover:bg-[#0A4D65] p-2 rounded-lg transition"
           >
             {collapsed ? <ChevronRight size={20} /> : <ChevronLeft size={20} />}
           </button>
         </div>
 
-        <div className="flex flex-col gap-2 px-3">
+        {/* Menu Items */}
+        <div className="flex flex-col gap-2 px-3 mt-2">
           {items.map((it) => {
-            const active = location.pathname === it.path;
+            const isActive = location.pathname === it.path;
+
             return (
               <Link
                 key={it.path}
                 to={it.path}
-                className={`flex items-center gap-3 px-4 py-3 rounded-lg transition ${
-                  active
-                    ? "bg-indigo-600 text-white shadow-md"
-                    : "text-yellow-500 hover:bg-blue-900/50"
-                }`}
+                className={`
+                  flex items-center gap-3 px-4 py-3 rounded-lg transition-all
+                  ${
+                    isActive
+                      ? `${ACTIVE_COLOR} bg-[#07344A] shadow-md`
+                      : `${INACTIVE_COLOR} ${HOVER_COLOR}`
+                  }
+                  hover:translate-x-1
+                `}
               >
                 {it.icon}
                 {!collapsed && <span>{it.label}</span>}

@@ -11,7 +11,7 @@ import Transaction from "./pages/Transaction";
 import AddTransactionPage from "./pages/transaction/AddTransaction";
 import EditTransactionPage from "./pages/transaction/EditTransaction";
 import Wallets from "./pages/Wallets";
-import HutangPiutang from "./pages/HutangPiutang";
+import Loan from "./pages/HutangPiutang";
 
 import AppLayout from "./layouts/AppLayout";
 import ProtectedRoute from "./pages/routes/ProtectedRoute";
@@ -41,7 +41,7 @@ export default function App() {
 
         <Route path="Transaction/add" element={<AddTransactionPage />} />
         <Route path="Transaction/edit/:id" element={<EditTransactionPage />} />
-        <Route path="hutangpiutang" element={<HutangPiutang />} />
+        <Route path="loan" element={<Loan />} />
       </Route>
     </Routes>
   );

@@ -1,69 +1,165 @@
 // src/pages/Budget.jsx
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { supabase } from "../lib/supabaseClient";
 import {
   Pencil,
   Trash,
   ArrowUpRight,
   ArrowDownRight,
-  CheckCircle,
+  MoreVertical,
 } from "lucide-react";
 
-/**
- * Budget.jsx - single-file, production-ready
- *
- * Features:
- * - Global budget (no month): income categories define total income.
- * - Expense categories allocate by percent (of total income) OR amount.
- * - Subcategories (expense-only) allocate by percent (of parent) OR amount.
- * - Validations: total allocations can't exceed income; sub allocations can't
- *   exceed parent's allocation.
- * - All CRUD operations for categories & subcategories.
- * - UI: modals for add/edit, auto-format number inputs, "FULL" red indicator
- *   when a category's subcategories already consume the full allocation.
- *
- * Notes:
- * - Assumes tables: budget_categories, budget_subcategories exist with fields
- *   used here (user_id, category, percent, amount, type, etc).
- * - Uses supabase.auth.getUser() to determine current user.
- */
+// dnd-kit
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  TouchSensor,
+  useSensor,
+  useSensors,
+  DragOverlay,
+} from "@dnd-kit/core";
 
-/* -------------------------
-   Utils: formatting/parsing
-   ------------------------- */
+import {
+  SortableContext,
+  rectSortingStrategy,
+  arrayMove,
+  useSortable,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+
+/* =========================
+   Theme
+   ========================= */
+const NAVY = "#052A3D";
+const GOLD = "#E8C174";
+
+/* =========================
+   Helpers
+   ========================= */
 function formatRupiah(n) {
-  if (n === null || n === undefined || Number.isNaN(Number(n))) return "-";
+  if (n === null || n === undefined || Number.isNaN(Number(n))) return "Rp 0";
   return "Rp " + Number(n).toLocaleString("id-ID");
 }
-function formatNumberForInput(rawDigits) {
-  if (!rawDigits && rawDigits !== 0) return "";
-  const digits = String(rawDigits).replace(/[^\d]/g, "");
-  if (digits === "") return "";
+function parseDigits(v) {
+  if (v === undefined || v === null) return "";
+  return String(v).replace(/[^\d]/g, "");
+}
+function fmtInput(v) {
+  if (v === undefined || v === null || v === "") return "";
+  const digits = String(v).replace(/[^\d]/g, "");
+  if (!digits) return "";
   return new Intl.NumberFormat("id-ID").format(Number(digits));
 }
-function parseInputToDigits(displayOrRaw) {
-  if (
-    displayOrRaw === "" ||
-    displayOrRaw === null ||
-    displayOrRaw === undefined
-  )
-    return "";
-  return String(displayOrRaw).replace(/[^\d]/g, "");
+
+/* =========================
+   Sortable Card (dnd-kit)
+   - hide original card while dragging (opacity: 0)
+   ========================= */
+function SortableCard({ id, children }) {
+  // id is like "income-123" or "expense-456"
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 60 : undefined,
+    opacity: isDragging ? 0 : 1, // <-- hide original card during drag
+    pointerEvents: isDragging ? "none" : undefined,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      {...listeners}
+      className="w-full"
+    >
+      {children}
+    </div>
+  );
 }
 
-/* -------------------------
+/* =========================
+   MenuActions component (three-dots menu)
+   - full-width clickable rows
+   ========================= */
+function MenuActions({ onEdit, onDelete }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="relative inline-block" onClick={(e) => e.stopPropagation()}>
+      <button
+        type="button"
+        aria-haspopup="true"
+        aria-expanded={open}
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+        className="p-2 rounded hover:bg-slate-100"
+        title="Actions"
+      >
+        <MoreVertical size={16} />
+      </button>
+
+      {open && (
+        <div
+          className="absolute right-0 mt-2 w-40 bg-white border rounded shadow-md z-40"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            onClick={() => {
+              setOpen(false);
+              onEdit && onEdit();
+            }}
+            className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 flex items-center gap-3"
+          >
+            <Pencil size={14} />
+            <span>Edit</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setOpen(false);
+              onDelete && onDelete();
+            }}
+            className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 text-red-600 flex items-center gap-3"
+          >
+            <Trash size={14} />
+            <span>Hapus</span>
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* =========================
    Component
-   ------------------------- */
+   ========================= */
 export default function Budget() {
-  const [loading, setLoading] = useState(false);
-
   // data
-  const [categories, setCategories] = useState([]); // { id, category, percent, amount, type }
-  const [subcategories, setSubcategories] = useState([]); // { id, category_id, name, percent, amount }
+  const [categories, setCategories] = useState([]); // both income & expense
+  const [subcategories, setSubcategories] = useState([]);
 
-  // category modal
+  // UI state
+  const [loading, setLoading] = useState(false);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
+  const [showSubModal, setShowSubModal] = useState(false);
   const [editingCategory, setEditingCategory] = useState(null);
+  const [editingSub, setEditingSub] = useState(null);
+  const [selectedCategoryForSub, setSelectedCategoryForSub] = useState(null);
+
+  // forms
   const [categoryForm, setCategoryForm] = useState({
     category: "",
     percent: "",
@@ -71,11 +167,6 @@ export default function Budget() {
     amountDisplay: "",
     type: "expense",
   });
-
-  // sub modal
-  const [showSubModal, setShowSubModal] = useState(false);
-  const [editingSub, setEditingSub] = useState(null);
-  const [selectedCategoryForSub, setSelectedCategoryForSub] = useState(null);
   const [subForm, setSubForm] = useState({
     name: "",
     percent: "",
@@ -83,35 +174,44 @@ export default function Budget() {
     amountDisplay: "",
   });
 
+  // dnd-kit sensors
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, {
+      activationConstraint: { delay: 80, tolerance: 8 },
+    })
+  );
+
+  // overlay item for nicer lift effect
+  const [activeId, setActiveId] = useState(null);
+  const [activeItem, setActiveItem] = useState(null); // full item object
+
+  /* -------------- load ---------------- */
   useEffect(() => {
     loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function loadAll() {
+  const loadAll = useCallback(async () => {
     setLoading(true);
     await Promise.all([fetchCategories(), fetchSubcategories()]);
     setLoading(false);
-  }
+  }, []);
 
   async function fetchCategories() {
     try {
-      const r = await supabase.auth.getUser();
-      const user = r?.data?.user;
+      const user = (await supabase.auth.getUser())?.data?.user;
       if (!user) return;
-
       const { data, error } = await supabase
         .from("budget_categories")
         .select("*")
         .eq("user_id", user.id)
-        .order("created_at", { ascending: true });
-
+        .order("order_index", { ascending: true });
       if (error) throw error;
-      const normalized = (data || []).map((d) => ({
-        ...d,
-        type: d.type || "expense",
-      }));
-      setCategories(normalized);
+      // normalize
+      setCategories(
+        (data || []).map((c) => ({ ...c, type: c.type || "expense" }))
+      );
     } catch (err) {
       console.error("fetchCategories", err);
       setCategories([]);
@@ -120,16 +220,13 @@ export default function Budget() {
 
   async function fetchSubcategories() {
     try {
-      const r = await supabase.auth.getUser();
-      const user = r?.data?.user;
+      const user = (await supabase.auth.getUser())?.data?.user;
       if (!user) return;
-
       const { data, error } = await supabase
         .from("budget_subcategories")
         .select("*")
         .eq("user_id", user.id)
         .order("created_at", { ascending: true });
-
       if (error) throw error;
       setSubcategories(data || []);
     } catch (err) {
@@ -138,65 +235,116 @@ export default function Budget() {
     }
   }
 
-  /* -------------------------
-     Derived values
-     ------------------------- */
-  const incomeCategories = categories.filter(
-    (c) => (c.type || "expense") === "income"
-  );
-  const expenseCategories = categories.filter(
-    (c) => (c.type || "expense") === "expense"
-  );
+  /* -------------- derived ---------------- */
+  const incomeCategories = categories.filter((c) => c.type === "income");
+  const expenseCategories = categories.filter((c) => c.type === "expense");
 
   const totalIncome = incomeCategories.reduce(
     (s, c) => s + Number(c.amount || 0),
     0
   );
 
-  function computeAllocatedForExpense(cat) {
+  function calcAllocated(cat) {
     if (!cat) return 0;
-    if (
-      cat.percent !== null &&
-      cat.percent !== undefined &&
-      cat.percent !== ""
-    ) {
-      return Math.round((Number(cat.percent) / 100) * Number(totalIncome || 0));
-    }
-    if (cat.amount !== null && cat.amount !== undefined && cat.amount !== "") {
-      return Number(cat.amount || 0);
-    }
-    return 0;
+    if (cat.percent || cat.percent === 0)
+      return Math.round((Number(cat.percent) / 100) * totalIncome);
+    return Number(cat.amount || 0);
   }
 
-  function computeAllocatedForSub(sub, parentAllocated) {
+  function calcAllocatedSub(sub, parentAllocated) {
     if (!sub) return 0;
-    if (
-      sub.percent !== null &&
-      sub.percent !== undefined &&
-      sub.percent !== ""
-    ) {
-      return Math.round(
-        (Number(sub.percent) / 100) * Number(parentAllocated || 0)
+    if (sub.percent || sub.percent === 0)
+      return Math.round((Number(sub.percent) / 100) * parentAllocated);
+    return Number(sub.amount || 0);
+  }
+
+  const totalExpenseAllocated = expenseCategories.reduce(
+    (s, c) => s + calcAllocated(c),
+    0
+  );
+  const usedPercent =
+    totalIncome > 0
+      ? Math.min(Math.round((totalExpenseAllocated / totalIncome) * 100), 100)
+      : 0;
+  const remainingIncome = Math.max(0, totalIncome - totalExpenseAllocated);
+
+  /* -------------- DnD-kit handlers ---------------- */
+  function parseId(fullId) {
+    // fullId format "income-<id>" or "expense-<id>"
+    if (!fullId) return { group: null, id: null };
+    const idx = String(fullId).indexOf("-");
+    if (idx === -1) return { group: null, id: fullId };
+    const group = String(fullId).slice(0, idx);
+    const id = String(fullId).slice(idx + 1);
+    return { group, id };
+  }
+
+  async function handleDragEnd(event) {
+    const { active, over } = event;
+    setActiveId(null);
+    setActiveItem(null);
+    if (!over) return;
+
+    const a = parseId(active.id);
+    const b = parseId(over.id);
+
+    // require same group
+    if (a.group !== b.group) return;
+
+    const group = a.group; // "income" or "expense"
+    const list =
+      group === "income" ? [...incomeCategories] : [...expenseCategories];
+
+    const oldIndex = list.findIndex((it) => String(it.id) === a.id);
+    const newIndex = list.findIndex((it) => String(it.id) === b.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+    if (oldIndex === newIndex) return;
+
+    const moved = arrayMove(list, oldIndex, newIndex);
+
+    // update local categories: assign order_index within its group
+    const updatedGroup = moved.map((it, idx) => ({ ...it, order_index: idx }));
+    const otherGroup =
+      group === "income" ? expenseCategories : incomeCategories;
+
+    const merged =
+      group === "income"
+        ? [...updatedGroup, ...otherGroup]
+        : [...otherGroup, ...updatedGroup];
+    // normalize merged by order_index (if all set)
+    const normalized = merged
+      .slice()
+      .sort((x, y) => (x.order_index ?? 0) - (y.order_index ?? 0));
+
+    setCategories(normalized);
+
+    // persist only updatedGroup
+    try {
+      await Promise.all(
+        updatedGroup.map((it) =>
+          supabase
+            .from("budget_categories")
+            .update({ order_index: it.order_index })
+            .eq("id", it.id)
+        )
       );
+    } catch (err) {
+      console.error("save order failed", err);
     }
-    if (sub.amount !== null && sub.amount !== undefined && sub.amount !== "") {
-      return Number(sub.amount || 0);
-    }
-    return 0;
   }
 
-  function sumSubAllocationsForCategory(categoryId) {
-    const parentAllocated =
-      computeAllocatedForExpense(categories.find((c) => c.id === categoryId)) ||
-      0;
-    return subcategories
-      .filter((s) => s.category_id === categoryId)
-      .reduce((s, x) => s + computeAllocatedForSub(x, parentAllocated), 0);
+  function handleDragStart(event) {
+    setActiveId(event.active.id);
+    // find full item and set as activeItem for overlay
+    const parsed = parseId(event.active.id);
+    const group = parsed.group;
+    const id = parsed.id;
+    const list = group === "income" ? incomeCategories : expenseCategories;
+    const found = list.find((it) => String(it.id) === String(id));
+    setActiveItem(found || null);
   }
 
-  /* -------------------------
-     Category CRUD
-     ------------------------- */
+  /* -------------- modal open/close & operations ---------------- */
   function openAddCategory(type = "expense") {
     setEditingCategory(null);
     setCategoryForm({
@@ -208,7 +356,6 @@ export default function Budget() {
     });
     setShowCategoryModal(true);
   }
-
   function openEditCategory(cat) {
     setEditingCategory(cat);
     setCategoryForm({
@@ -216,581 +363,586 @@ export default function Budget() {
       percent: cat.percent ?? "",
       amount: cat.amount ?? "",
       amountDisplay:
-        cat.amount || cat.amount === 0
-          ? formatNumberForInput(String(cat.amount))
-          : "",
+        cat.amount || cat.amount === 0 ? fmtInput(String(cat.amount)) : "",
       type: cat.type || "expense",
     });
     setShowCategoryModal(true);
   }
 
-  async function handleDeleteCategory(id) {
-    if (
-      !confirm(
-        "Hapus kategori? Semua jenis (subcategory) terkait juga akan dihapus."
-      )
-    )
-      return;
-    try {
-      // delete subcategories first
-      const { error: e1 } = await supabase
-        .from("budget_subcategories")
-        .delete()
-        .eq("category_id", id);
-      if (e1) throw e1;
-      const { error } = await supabase
-        .from("budget_categories")
-        .delete()
-        .eq("id", id);
-      if (error) throw error;
-      await fetchCategories();
-      await fetchSubcategories();
-    } catch (err) {
-      console.error("delete category err", err);
-      alert("Gagal menghapus kategori");
-    }
-  }
-
-  async function handleCategorySubmit(e) {
-    e?.preventDefault?.();
-    try {
-      const r = await supabase.auth.getUser();
-      const user = r?.data?.user;
-      if (!user) return alert("User belum login");
-      if (!categoryForm.category || !categoryForm.type)
-        return alert("Isi nama dan tipe kategori");
-
-      // validations
-      if (categoryForm.type === "income") {
-        if (categoryForm.amount === "" || Number(categoryForm.amount) <= 0) {
-          return alert("Untuk kategori income, masukkan nominal (amount).");
-        }
-      } else {
-        // expense: require percent or amount
-        if (
-          (categoryForm.percent === "" || categoryForm.percent === null) &&
-          (categoryForm.amount === "" || categoryForm.amount === null)
-        ) {
-          return alert("Untuk kategori expense, isi persentase atau nominal.");
-        }
-      }
-
-      const payload = {
-        category: categoryForm.category.trim(),
-        percent:
-          categoryForm.percent !== "" ? Number(categoryForm.percent) : null,
-        amount: categoryForm.amount !== "" ? Number(categoryForm.amount) : null,
-        type: categoryForm.type,
-      };
-
-      // ensure expense allocations don't exceed income
-      if (payload.type === "expense" && totalIncome > 0) {
-        const existingAllocated = expenseCategories
-          .filter((c) => (editingCategory ? c.id !== editingCategory.id : true))
-          .reduce((s, c) => s + computeAllocatedForExpense(c), 0);
-        const proposedAllocated = computeAllocatedForExpense(payload);
-        if (existingAllocated + proposedAllocated > totalIncome) {
-          return alert(
-            `Total alokasi melebihi total income (${formatRupiah(
-              existingAllocated + proposedAllocated
-            )} > ${formatRupiah(totalIncome)}).`
-          );
-        }
-      }
-
-      if (editingCategory) {
-        const { error } = await supabase
-          .from("budget_categories")
-          .update({
-            category: payload.category,
-            percent: payload.percent,
-            amount: payload.amount,
-            type: payload.type,
-          })
-          .eq("id", editingCategory.id);
-        if (error) throw error;
-      } else {
-        const { error } = await supabase.from("budget_categories").insert({
-          user_id: user.id,
-          ...payload,
-        });
-        if (error) throw error;
-      }
-
-      setShowCategoryModal(false);
-      setEditingCategory(null);
-      await fetchCategories();
-      await fetchSubcategories();
-    } catch (err) {
-      console.error("save category err", err);
-      alert("Gagal menyimpan kategori: " + (err?.message || err));
-    }
-  }
-
-  /* -------------------------
-     Subcategory CRUD
-     ------------------------- */
   function openAddSubcategoryFor(cat) {
     setSelectedCategoryForSub(cat);
     setEditingSub(null);
     setSubForm({ name: "", percent: "", amount: "", amountDisplay: "" });
     setShowSubModal(true);
   }
-
   function openEditSubcategory(sub) {
-    const parent = categories.find((c) => c.id === sub.category_id);
-    setSelectedCategoryForSub(parent || null);
+    const parent = categories.find((c) => c.id === sub.category_id) || null;
+    setSelectedCategoryForSub(parent);
     setEditingSub(sub);
     setSubForm({
       name: sub.name || "",
       percent: sub.percent ?? "",
       amount: sub.amount ?? "",
       amountDisplay:
-        sub.amount || sub.amount === 0
-          ? formatNumberForInput(String(sub.amount))
-          : "",
+        sub.amount || sub.amount === 0 ? fmtInput(String(sub.amount)) : "",
     });
     setShowSubModal(true);
   }
 
-  async function deleteSubcategory(id) {
-    if (!confirm("Hapus jenis?")) return;
+  async function saveCategory() {
     try {
-      const { error } = await supabase
-        .from("budget_subcategories")
-        .delete()
-        .eq("id", id);
-      if (error) throw error;
-      await fetchSubcategories();
+      const user = (await supabase.auth.getUser())?.data?.user;
+      if (!user) return alert("User belum login");
+      const prepared = {
+        category: (categoryForm.category || "").trim(),
+        percent:
+          categoryForm.percent !== "" ? Number(categoryForm.percent) : null,
+        amount: categoryForm.amount !== "" ? Number(categoryForm.amount) : null,
+        type: categoryForm.type || "expense",
+        user_id: user.id,
+      };
+      if (!prepared.category) return alert("Nama kategori wajib diisi");
+
+      if (!editingCategory) {
+        // determine next order_index within group
+        const group = prepared.type;
+        const groupItems = categories.filter((c) => c.type === group);
+        prepared.order_index = groupItems.length;
+        const { error } = await supabase
+          .from("budget_categories")
+          .insert(prepared);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from("budget_categories")
+          .update(prepared)
+          .eq("id", editingCategory.id);
+        if (error) throw error;
+      }
+      setShowCategoryModal(false);
+      await loadAll();
     } catch (err) {
-      console.error("delete sub err", err);
-      alert("Gagal menghapus jenis");
+      console.error("saveCategory", err);
+      alert("Gagal menyimpan kategori");
     }
   }
 
-  async function handleSaveSubcategory(e) {
-    e?.preventDefault?.();
+  async function saveSubcategory() {
     try {
-      const r = await supabase.auth.getUser();
-      const user = r?.data?.user;
+      const user = (await supabase.auth.getUser())?.data?.user;
       if (!user) return alert("User belum login");
       if (!selectedCategoryForSub)
-        return alert("Pilih kategori parent terlebih dahulu");
-      if (!subForm.name || !subForm.name.trim()) return alert("Isi nama jenis");
+        return alert("Pilih kategori terlebih dahulu");
+      if (!subForm.name || !String(subForm.name).trim())
+        return alert("Nama jenis wajib diisi");
 
-      if (
-        (subForm.percent === "" || subForm.percent === null) &&
-        (subForm.amount === "" || subForm.amount === null)
-      ) {
-        return alert("Untuk jenis: isi persentase atau nominal.");
-      }
+      const prepared = {
+        name: subForm.name.trim(),
+        percent: subForm.percent !== "" ? Number(subForm.percent) : null,
+        amount: subForm.amount !== "" ? Number(subForm.amount) : null,
+        category_id: selectedCategoryForSub.id,
+        user_id: user.id,
+      };
 
-      const parentAllocated = computeAllocatedForExpense(
-        selectedCategoryForSub
-      );
-
-      const newSubAmount =
-        subForm.percent !== "" && subForm.percent !== null
-          ? Math.round((Number(subForm.percent) / 100) * parentAllocated)
-          : Number(subForm.amount || 0);
-
-      // existing sum excluding the editing one
-      const existingSubs = subcategories.filter(
-        (s) =>
-          s.category_id === selectedCategoryForSub.id &&
-          (!editingSub || s.id !== editingSub.id)
-      );
-      const existingSum = existingSubs.reduce(
-        (s, x) => s + computeAllocatedForSub(x, parentAllocated),
-        0
-      );
-
-      if (existingSum + newSubAmount > parentAllocated) {
-        return alert(
-          `Total semua jenis melebihi alokasi kategori (${formatRupiah(
-            existingSum + newSubAmount
-          )} > ${formatRupiah(parentAllocated)}).`
-        );
-      }
-
-      if (editingSub) {
+      if (!editingSub) {
         const { error } = await supabase
           .from("budget_subcategories")
-          .update({
-            name: subForm.name.trim(),
-            percent: subForm.percent !== "" ? Number(subForm.percent) : null,
-            amount: subForm.amount !== "" ? Number(subForm.amount) : null,
-          })
-          .eq("id", editingSub.id);
+          .insert(prepared);
         if (error) throw error;
       } else {
-        const { error } = await supabase.from("budget_subcategories").insert({
-          user_id: user.id,
-          category_id: selectedCategoryForSub.id,
-          name: subForm.name.trim(),
-          percent: subForm.percent !== "" ? Number(subForm.percent) : null,
-          amount: subForm.amount !== "" ? Number(subForm.amount) : null,
-        });
+        const { error } = await supabase
+          .from("budget_subcategories")
+          .update(prepared)
+          .eq("id", editingSub.id);
         if (error) throw error;
       }
 
       setShowSubModal(false);
-      setEditingSub(null);
-      setSelectedCategoryForSub(null);
-      setSubForm({ name: "", percent: "", amount: "", amountDisplay: "" });
-      await fetchSubcategories();
+      await loadAll();
     } catch (err) {
-      console.error("save sub err", err);
-      alert("Gagal menyimpan jenis: " + (err?.message || err));
+      console.error("saveSubcategory", err);
+      alert("Gagal menyimpan jenis");
     }
   }
 
-  /* -------------------------
-     UI Helpers: remaining calculations for modal previews
-     ------------------------- */
-  const existingExpenseAllocated = expenseCategories.reduce(
-    (s, c) => s + computeAllocatedForExpense(c),
-    0
-  );
-  const remainingIncomeForExpenses = Math.max(
-    0,
-    totalIncome - existingExpenseAllocated
-  );
+  async function deleteCategory(id) {
+    if (!confirm("Hapus kategori?")) return;
+    try {
+      await supabase
+        .from("budget_subcategories")
+        .delete()
+        .eq("category_id", id);
+      await supabase.from("budget_categories").delete().eq("id", id);
+      await loadAll();
+    } catch (err) {
+      console.error("deleteCategory", err);
+      alert("Gagal menghapus kategori");
+    }
+  }
 
-  const calcRemainingIfCategory = () => {
-    const existing = expenseCategories
-      .filter((c) => (editingCategory ? c.id !== editingCategory.id : true))
-      .reduce((s, c) => s + computeAllocatedForExpense(c), 0);
-    const leftover = Math.max(0, totalIncome - existing);
-    return leftover;
-  };
+  async function deleteSub(id) {
+    if (!confirm("Hapus jenis?")) return;
+    try {
+      await supabase.from("budget_subcategories").delete().eq("id", id);
+      await loadAll();
+    } catch (err) {
+      console.error("deleteSub", err);
+      alert("Gagal menghapus jenis");
+    }
+  }
 
-  const parentAllocatedLive = selectedCategoryForSub
-    ? computeAllocatedForExpense(selectedCategoryForSub)
-    : 0;
-  const existingSubsSumLive = selectedCategoryForSub
-    ? subcategories
-        .filter(
-          (s) =>
-            s.category_id === selectedCategoryForSub.id &&
-            (!editingSub || s.id !== editingSub.id)
-        )
-        .reduce((s, x) => s + computeAllocatedForSub(x, parentAllocatedLive), 0)
-    : 0;
-  const remainingForSubsLive = Math.max(
-    0,
-    parentAllocatedLive - existingSubsSumLive
-  );
-
-  /* -------------------------
+  /* =========================
      Render
-     ------------------------- */
-  return (
-    <>
-      <div className="min-h-screen bg-gray-50 p-6">
-        <div className="max-w-6xl mx-auto">
-          {/* Header */}
-          <header className="flex items-center justify-between mb-6">
-            <div>
-              <h1 className="text-2xl font-semibold text-slate-900">Budget</h1>
-              <p className="text-sm text-slate-500">
-                Pengaturan budgeting global — income berasal dari kategori
-                income.
-              </p>
+     ========================= */
+
+  /* Helper: render overlay card (full card) */
+  function renderOverlayCard() {
+    if (!activeItem) return null;
+    const parsed = parseId(activeId);
+    const type = parsed.group;
+    const allocated = type === "expense" ? calcAllocated(activeItem) : null;
+    const subsForActive = subcategories.filter(
+      (s) => s.category_id === activeItem.id
+    );
+    const subSum = allocated
+      ? subsForActive.reduce((s, x) => s + calcAllocatedSub(x, allocated), 0)
+      : 0;
+    const remainingForCat = allocated ? Math.max(0, allocated - subSum) : 0;
+    const pct = allocated
+      ? Math.min(Math.round((subSum / allocated) * 100), 100)
+      : 0;
+    const isExpense = type === "expense";
+
+    // Overlay card style + scale animation
+    return (
+      <div
+        className="w-96 bg-white border rounded-xl p-5 shadow-2xl"
+        style={{
+          transform: "scale(1.03)",
+          transition:
+            "transform 180ms cubic-bezier(.2,.9,.2,1), box-shadow 180ms",
+          boxShadow:
+            "0 10px 30px rgba(2,6,23,0.15), 0 4px 10px rgba(2,6,23,0.06)",
+        }}
+      >
+        <div className="flex justify-between items-start mb-3">
+          <div>
+            <div className="font-semibold text-base" style={{ color: NAVY }}>
+              {activeItem.category}
             </div>
-
-            <div className="flex items-center gap-3">
-              <div className="text-sm text-slate-500 text-right">
-                <div className="text-xs">Total Income</div>
-                <div className="font-medium text-lg">
-                  {formatRupiah(totalIncome)}
-                </div>
-              </div>
-            </div>
-          </header>
-
-          {/* Controls */}
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-base font-medium text-slate-800">Kategori</h2>
-            <div className="flex gap-2">
-              <button
-                onClick={() => openAddCategory("income")}
-                className="inline-flex items-center gap-2 px-3 py-2 bg-white border rounded shadow-sm text-indigo-700"
-              >
-                <ArrowUpRight /> Tambah Income
-              </button>
-
-              <button
-                onClick={() => openAddCategory("expense")}
-                className="inline-flex items-center gap-2 px-3 py-2 bg-white border rounded shadow-sm text-red-600"
-              >
-                <ArrowDownRight /> Tambah Expense
-              </button>
+            <div className="text-xs text-slate-500">
+              {isExpense
+                ? `Alokasi: ${formatRupiah(allocated)}`
+                : "Income Category"}
             </div>
           </div>
 
-          {/* Income */}
-          <section className="mb-8">
-            <h3 className="text-sm font-semibold text-indigo-700 mb-3">
-              Income Categories
-            </h3>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {incomeCategories.length === 0 ? (
-                <div className="col-span-full bg-white p-4 rounded border text-slate-600">
-                  Belum ada kategori income.
-                </div>
+          <div className="text-sm font-semibold" style={{ color: NAVY }}>
+            {isExpense ? `${pct}%` : formatRupiah(activeItem.amount)}
+          </div>
+        </div>
+
+        {isExpense ? (
+          <>
+            <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden mb-2">
+              <div
+                className="h-full"
+                style={{
+                  width: `${pct}%`,
+                  background: `linear-gradient(90deg, ${NAVY} 0%, ${GOLD} 100%)`,
+                }}
+              />
+            </div>
+
+            <div className="flex justify-between text-xs text-slate-500 mb-3">
+              <div>Terpakai: {formatRupiah(subSum)}</div>
+              <div>Sisa: {formatRupiah(remainingForCat)}</div>
+            </div>
+
+            <div className="space-y-2 max-h-36 overflow-auto pr-1">
+              {subsForActive.length === 0 ? (
+                <div className="text-xs text-slate-500">Belum ada jenis</div>
               ) : (
-                incomeCategories.map((c) => (
-                  <div
-                    key={c.id}
-                    className="bg-white rounded-lg p-4 shadow-sm border flex justify-between items-center"
-                  >
-                    <div>
-                      <div className="text-sm font-medium text-slate-800">
-                        {c.category}
+                subsForActive.map((s) => {
+                  const val = calcAllocatedSub(s, allocated);
+                  return (
+                    <div
+                      key={s.id}
+                      className="bg-slate-50 p-3 rounded-lg flex justify-between items-center"
+                    >
+                      <div>
+                        <div className="text-sm" style={{ color: NAVY }}>
+                          {s.name}
+                        </div>
+                        <div className="text-xs text-slate-500">
+                          {s.percent ? `${s.percent}%` : ""} •{" "}
+                          {formatRupiah(val)}
+                        </div>
                       </div>
-                      <div className="text-xs text-slate-400 mt-1">
-                        Income category
+                      <div className="text-xs text-slate-500">
+                        {formatRupiah(val)}
                       </div>
                     </div>
+                  );
+                })
+              )}
+            </div>
+          </>
+        ) : (
+          <div className="mt-3">
+            <div
+              className="text-lg font-bold tracking-tight"
+              style={{ color: NAVY }}
+            >
+              {formatRupiah(activeItem.amount)}
+            </div>
+            <div className="text-xs text-slate-500 mt-2">
+              Income category details
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
 
-                    <div className="flex items-center gap-3">
-                      <div className="text-right">
-                        <div className="text-sm text-slate-500">Nominal</div>
-                        <div className="font-semibold">
-                          {formatRupiah(c.amount || 0)}
+  return (
+    <div className="min-h-screen p-6 bg-[#F3F7FA]">
+      <div className="max-w-6xl mx-auto">
+        {/* Header */}
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
+          <div>
+            <h1 className="text-3xl font-bold" style={{ color: NAVY }}>
+              Budget Planner
+            </h1>
+            <p className="text-sm text-slate-500">
+              Modern bank-style budget view
+            </p>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <div className="flex gap-2">
+              <button
+                className="px-3 py-2 rounded-lg text-white flex items-center gap-2"
+                style={{ background: NAVY }}
+                type="button"
+                onClick={() => openAddCategory("income")}
+              >
+                <ArrowUpRight size={16} /> Income
+              </button>
+
+              <button
+                className="px-3 py-2 rounded-lg flex items-center gap-2"
+                style={{ background: GOLD, color: NAVY }}
+                type="button"
+                onClick={() => openAddCategory("expense")}
+              >
+                <ArrowDownRight size={16} /> Expense
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragStart={handleDragStart}
+          onDragEnd={handleDragEnd}
+        >
+          {/* Income */}
+          <section className="mb-8">
+            <div className="bg-white rounded-2xl border shadow-md px-6 py-4 mb-4">
+              <div className="text-xs text-slate-500">Total Income</div>
+
+              <div className="flex items-end justify-between mt-1">
+                <div
+                  className="text-3xl font-bold tracking-tight"
+                  style={{ color: NAVY }}
+                >
+                  {formatRupiah(totalIncome)}
+                </div>
+
+                <div className="text-right">
+                  <div className="text-xs text-slate-500">Remaining</div>
+                  <div
+                    className="text-sm font-semibold"
+                    style={{ color: GOLD }}
+                  >
+                    {formatRupiah(remainingIncome)}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <SortableContext
+              items={incomeCategories.map((c) => `income-${c.id}`)}
+              strategy={rectSortingStrategy}
+            >
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+                {incomeCategories.map((c) => (
+                  <SortableCard key={`income-${c.id}`} id={`income-${c.id}`}>
+                    <div
+                      className="
+                        bg-white 
+                        border 
+                        rounded-xl 
+                        p-5 
+                        shadow-sm 
+                        flex flex-col 
+                        justify-between 
+                        h-full 
+                        transition-all 
+                        hover:shadow-md
+                      "
+                      role="group"
+                    >
+                      {/* TOP SECTION */}
+                      <div className="flex items-start justify-between mb-3">
+                        <div className="flex items-center gap-3">
+                          <div>
+                            <div
+                              className="font-semibold text-base"
+                              style={{ color: NAVY }}
+                            >
+                              {c.category}
+                            </div>
+                            <div className="text-xs text-slate-500 leading-tight">
+                              Income Category
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* ACTION MENU */}
+                        <div>
+                          <MenuActions
+                            onEdit={() => openEditCategory(c)}
+                            onDelete={() => deleteCategory(c.id)}
+                          />
                         </div>
                       </div>
 
-                      <div className="flex gap-2 ml-4">
-                        <button
-                          onClick={() => openEditCategory(c)}
-                          className="p-2 rounded bg-indigo-500 text-white"
+                      {/* AMOUNT */}
+                      <div className="mt-auto">
+                        <div
+                          className="text-lg font-bold tracking-tight"
+                          style={{ color: NAVY }}
                         >
-                          <Pencil />
-                        </button>
-                        <button
-                          onClick={() => handleDeleteCategory(c.id)}
-                          className="p-2 rounded bg-red-500 text-white"
-                        >
-                          <Trash />
-                        </button>
+                          {formatRupiah(c.amount)}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))
-              )}
-            </div>
+                  </SortableCard>
+                ))}
+              </div>
+            </SortableContext>
           </section>
 
           {/* Expense */}
           <section>
-            <h3 className="text-sm font-semibold text-red-600 mb-3">
-              Expense Categories
-            </h3>
+            <div className="mb-3">
+              <h2
+                className="text-lg font-semibold mb-2"
+                style={{ color: NAVY }}
+              >
+                Expense
+              </h2>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-              {expenseCategories.length === 0 ? (
-                <div className="col-span-full bg-white p-6 rounded-lg border shadow text-slate-600">
-                  Belum ada kategori expense.
+              {/* total expense summary box */}
+              <div className="w-full mb-4">
+                <div className="bg-white border rounded-xl p-4 shadow-sm">
+                  <div className="flex justify-between items-center mb-2">
+                    <div className="text-sm text-slate-600">Total Expense</div>
+                    <div
+                      className="text-sm font-semibold"
+                      style={{ color: NAVY }}
+                    >
+                      {usedPercent}% dari Income
+                    </div>
+                  </div>
+
+                  <div className="w-full h-3 bg-slate-200 rounded-full overflow-hidden">
+                    <div
+                      className="h-full"
+                      style={{
+                        width: `${usedPercent}%`,
+                        background: `linear-gradient(90deg, ${NAVY} 0%, ${GOLD} 100%)`,
+                      }}
+                    />
+                  </div>
+
+                  <div className="text-xs text-slate-500 mt-2">
+                    Income: <strong>{formatRupiah(totalIncome)}</strong> •
+                    Expense:{" "}
+                    <strong>{formatRupiah(totalExpenseAllocated)}</strong> •
+                    Sisa: <strong>{formatRupiah(remainingIncome)}</strong>
+                  </div>
                 </div>
-              ) : (
-                expenseCategories.map((c) => {
-                  const allocated = computeAllocatedForExpense(c);
+              </div>
+            </div>
+
+            <SortableContext
+              items={expenseCategories.map((c) => `expense-${c.id}`)}
+              strategy={rectSortingStrategy}
+            >
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                {expenseCategories.map((c) => {
+                  const allocated = calcAllocated(c);
                   const subs = subcategories.filter(
                     (s) => s.category_id === c.id
                   );
                   const subSum = subs.reduce(
-                    (s, x) => s + computeAllocatedForSub(x, allocated),
+                    (s, x) => s + calcAllocatedSub(x, allocated),
                     0
                   );
-
-                  const percentVal =
-                    c.percent !== null &&
-                    c.percent !== undefined &&
-                    c.percent !== ""
-                      ? Number(c.percent)
-                      : allocated && totalIncome
-                      ? Math.round((allocated / totalIncome) * 100)
-                      : null;
-
-                  const isFull = allocated > 0 && subSum >= allocated;
+                  const remainingForCat = Math.max(0, allocated - subSum);
+                  const pct =
+                    allocated > 0
+                      ? Math.min(Math.round((subSum / allocated) * 100), 100)
+                      : 0;
 
                   return (
-                    <article
-                      key={c.id}
-                      className="bg-white rounded-lg p-4 shadow-sm border"
+                    <SortableCard
+                      key={`expense-${c.id}`}
+                      id={`expense-${c.id}`}
                     >
-                      <div className="flex justify-between items-start">
-                        <div className="flex-1 pr-4">
-                          <div className="flex items-center gap-2">
-                            <div className="text-sm font-medium text-slate-800">
+                      <div className="bg-white border rounded-xl p-5 shadow-sm flex flex-col h-full">
+                        <div className="flex justify-between items-start mb-3">
+                          <div>
+                            <div
+                              className="font-semibold"
+                              style={{ color: NAVY }}
+                            >
                               {c.category}
                             </div>
-                            {isFull ? (
-                              <div className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded-full">
-                                FULL
-                              </div>
-                            ) : (
-                              <div className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded-full">
-                                OK
-                              </div>
-                            )}
+                            <div className="text-xs text-slate-500">
+                              Alokasi: {formatRupiah(allocated)}
+                            </div>
                           </div>
 
-                          <div className="text-xs text-slate-400 mt-1">
-                            {percentVal !== null ? `${percentVal}%` : ""}{" "}
-                            {allocated ? `• ${formatRupiah(allocated)}` : ""}
-                          </div>
-
-                          <div className="h-2 bg-gray-100 rounded-full mt-3 overflow-hidden">
-                            <div
-                              style={{
-                                width: `${Math.min(
-                                  allocated && totalIncome
-                                    ? Math.round(
-                                        (allocated / (totalIncome || 1)) * 100
-                                      )
-                                    : 0,
-                                  100
-                                )}%`,
-                              }}
-                              className="h-2 bg-gradient-to-r from-red-400 to-rose-600"
+                          <div>
+                            <MenuActions
+                              onEdit={() => openEditCategory(c)}
+                              onDelete={() => deleteCategory(c.id)}
                             />
-                          </div>
-
-                          <div className="text-xs text-slate-400 mt-2">
-                            Alokasi kategori: {formatRupiah(allocated)} • Jumlah
-                            jenis: {formatRupiah(subSum)}
                           </div>
                         </div>
 
-                        <div className="flex flex-col gap-2">
-                          <div className="flex gap-2">
-                            <button
-                              onClick={() => openEditCategory(c)}
-                              className="p-2 rounded bg-yellow-400 text-white"
-                            >
-                              <Pencil />
-                            </button>
-                            <button
-                              onClick={() => handleDeleteCategory(c.id)}
-                              className="p-2 rounded bg-red-500 text-white"
-                            >
-                              <Trash />
-                            </button>
-                          </div>
+                        <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden mb-2">
+                          <div
+                            className="h-full"
+                            style={{
+                              width: `${pct}%`,
+                              background: `linear-gradient(90deg, ${NAVY} 0%, ${GOLD} 100%)`,
+                            }}
+                          />
+                        </div>
 
+                        <div className="flex justify-between items-center text-xs text-slate-500 mb-3">
+                          <div>Terpakai: {formatRupiah(subSum)}</div>
+                          <div>
+                            Sisa Alokasi: {formatRupiah(remainingForCat)}
+                          </div>
+                        </div>
+
+                        <div>
                           <button
+                            type="button"
+                            className="text-xs text-[#052A3D]"
                             onClick={() => openAddSubcategoryFor(c)}
-                            className="text-xs text-slate-500"
                           >
                             + Tambah jenis
                           </button>
-                        </div>
-                      </div>
 
-                      {/* Subcategories */}
-                      <div className="mt-4 space-y-3">
-                        {subs.length === 0 ? (
-                          <div className="text-xs text-slate-400">
-                            Belum ada jenis.
-                          </div>
-                        ) : (
-                          subs.map((s) => {
-                            const subAllocated = computeAllocatedForSub(
-                              s,
-                              allocated
-                            );
-                            const percentText =
-                              s.percent !== null &&
-                              s.percent !== undefined &&
-                              s.percent !== ""
-                                ? `${s.percent}%`
-                                : "";
-                            return (
-                              <div
-                                key={s.id}
-                                className="flex items-center justify-between bg-gray-50 rounded p-3"
-                              >
-                                <div>
-                                  <div className="text-sm text-slate-700">
-                                    {s.name}
+                          <div className="mt-3 space-y-2">
+                            {subs.map((s) => {
+                              const val = calcAllocatedSub(s, allocated);
+                              return (
+                                <div
+                                  key={s.id}
+                                  className="bg-slate-50 p-3 rounded-lg flex justify-between items-center"
+                                >
+                                  <div>
+                                    <div
+                                      className="text-sm"
+                                      style={{ color: NAVY }}
+                                    >
+                                      {s.name}
+                                    </div>
+                                    <div className="text-xs text-slate-500">
+                                      {s.percent ? `${s.percent}%` : ""} •{" "}
+                                      {formatRupiah(val)}
+                                    </div>
                                   </div>
-                                  <div className="text-xs text-slate-400">
-                                    {percentText} • {formatRupiah(subAllocated)}
-                                  </div>
-                                </div>
 
-                                <div className="text-right">
-                                  <div className="text-sm font-medium">
-                                    {formatRupiah(subAllocated)}
-                                  </div>
-                                  <div className="flex gap-2 mt-2 justify-end">
+                                  <div className="flex gap-3">
                                     <button
-                                      onClick={() => openEditSubcategory(s)}
+                                      type="button"
                                       className="text-xs text-slate-500"
+                                      onClick={() => openEditSubcategory(s)}
                                     >
                                       Edit
                                     </button>
                                     <button
-                                      onClick={() => deleteSubcategory(s.id)}
+                                      type="button"
                                       className="text-xs text-red-500"
+                                      onClick={() => deleteSub(s.id)}
                                     >
                                       Hapus
                                     </button>
                                   </div>
                                 </div>
-                              </div>
-                            );
-                          })
-                        )}
+                              );
+                            })}
+                          </div>
+                        </div>
                       </div>
-                    </article>
+                    </SortableCard>
                   );
-                })
-              )}
-            </div>
+                })}
+              </div>
+            </SortableContext>
           </section>
-        </div>
+
+          {/* Drag overlay for lifted card */}
+          <DragOverlay
+            dropAnimation={{
+              duration: 180,
+              easing: "cubic-bezier(.2,.9,.2,1)",
+            }}
+          >
+            {activeItem ? renderOverlayCard() : null}
+          </DragOverlay>
+        </DndContext>
       </div>
 
-      {/* Category Modal */}
+      {/* ===================== Category Modal ===================== */}
       {showCategoryModal && (
-        <Modal
-          onClose={() => {
-            setShowCategoryModal(false);
-            setEditingCategory(null);
-          }}
-        >
-          <h3 className="text-lg font-medium mb-3">
-            {editingCategory
-              ? "Edit Kategori"
-              : `Tambah Kategori (${categoryForm.type})`}
-          </h3>
+        <Modal onClose={() => setShowCategoryModal(false)}>
+          <div className="max-w-xl" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-semibold mb-3">
+              {editingCategory
+                ? "Edit Kategori"
+                : `Tambah Kategori (${categoryForm.type})`}
+            </h3>
 
-          <label className="text-sm text-slate-600">Nama kategori</label>
-          <input
-            value={categoryForm.category}
-            onChange={(e) =>
-              setCategoryForm({ ...categoryForm, category: e.target.value })
-            }
-            className="w-full p-2 border rounded mt-1 mb-3"
-            required
-          />
+            <label className="text-sm">Nama kategori</label>
+            <input
+              className="w-full p-2 border rounded mt-1 mb-3"
+              value={categoryForm.category}
+              onChange={(e) =>
+                setCategoryForm({ ...categoryForm, category: e.target.value })
+              }
+              autoFocus
+            />
 
-          {categoryForm.type === "expense" ? (
-            <>
-              <div className="grid grid-cols-2 gap-3">
+            {categoryForm.type === "expense" ? (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-stretch">
                 <div>
-                  <label className="text-sm text-slate-600">
-                    Persentase (% dari total income)
-                  </label>
+                  <label className="text-sm">Persentase (%)</label>
                   <input
+                    className="w-full p-2 border rounded mt-1"
                     type="number"
                     min="0"
                     max="100"
-                    step="0.1"
                     value={categoryForm.percent}
                     onChange={(e) =>
                       setCategoryForm({
@@ -800,298 +952,185 @@ export default function Budget() {
                         amountDisplay: "",
                       })
                     }
-                    className="w-full p-2 border rounded mt-1"
-                    placeholder="ex: 20"
                   />
                 </div>
 
                 <div>
-                  <label className="text-sm text-slate-600">Nominal (Rp)</label>
+                  <label className="text-sm">Nominal (Rp)</label>
                   <input
-                    type="text"
-                    inputMode="numeric"
+                    className="w-full p-2 border rounded mt-1"
                     value={categoryForm.amountDisplay}
                     onChange={(e) => {
-                      const digits = parseInputToDigits(e.target.value);
+                      const d = parseDigits(e.target.value);
                       setCategoryForm({
                         ...categoryForm,
-                        amount: digits,
-                        amountDisplay: formatNumberForInput(digits),
+                        amount: d,
+                        amountDisplay: fmtInput(d),
                         percent: "",
                       });
                     }}
-                    className="w-full p-2 border rounded mt-1"
-                    placeholder="ex: 500000"
                   />
                 </div>
               </div>
+            ) : (
+              <>
+                <label className="text-sm">Nominal (Rp)</label>
+                <input
+                  className="w-full p-2 border rounded mt-1 mb-3"
+                  value={categoryForm.amountDisplay}
+                  onChange={(e) => {
+                    const d = parseDigits(e.target.value);
+                    setCategoryForm({
+                      ...categoryForm,
+                      amount: d,
+                      amountDisplay: fmtInput(d),
+                    });
+                  }}
+                />
+              </>
+            )}
 
-              <div className="mt-3 text-sm text-slate-600">
-                <div>
-                  Total income: <strong>{formatRupiah(totalIncome)}</strong>
-                </div>
-                <div>
-                  Allocated (existing expense):{" "}
-                  <strong>{formatRupiah(existingExpenseAllocated)}</strong>
-                </div>
-                <div>
-                  Sisa alokasi sebelum penambahan:{" "}
-                  <strong>{formatRupiah(calcRemainingIfCategory())}</strong>
-                </div>
-
-                <div className="mt-2">
-                  Preview alokasi kategori baru:{" "}
-                  <strong>
-                    {categoryForm.percent
-                      ? formatRupiah(
-                          Math.round(
-                            (Number(categoryForm.percent || 0) / 100) *
-                              (totalIncome || 0)
-                          )
-                        )
-                      : categoryForm.amount
-                      ? formatRupiah(Number(categoryForm.amount))
-                      : "-"}
-                  </strong>
-                </div>
-
-                <div className="mt-1">
-                  Sisa setelah penambahan:{" "}
-                  <strong>
-                    {(() => {
-                      const existingEx = expenseCategories
-                        .filter((c) =>
-                          editingCategory ? c.id !== editingCategory.id : true
-                        )
-                        .reduce((s, c) => s + computeAllocatedForExpense(c), 0);
-                      const proposed = categoryForm.percent
-                        ? Math.round(
-                            (Number(categoryForm.percent || 0) / 100) *
-                              (totalIncome || 0)
-                          )
-                        : categoryForm.amount
-                        ? Number(categoryForm.amount || 0)
-                        : 0;
-                      const val = Math.max(
-                        0,
-                        totalIncome - (existingEx + proposed)
-                      );
-                      return formatRupiah(val);
-                    })()}
-                  </strong>
-                </div>
-              </div>
-            </>
-          ) : (
-            <>
-              <label className="text-sm text-slate-600">Nominal (Rp)</label>
-              <input
-                type="text"
-                inputMode="numeric"
-                value={categoryForm.amountDisplay}
-                onChange={(e) => {
-                  const digits = parseInputToDigits(e.target.value);
-                  setCategoryForm({
-                    ...categoryForm,
-                    amount: digits,
-                    amountDisplay: formatNumberForInput(digits),
-                  });
+            <div className="flex justify-end gap-3 mt-4">
+              <button
+                type="button"
+                className="px-4 py-2 border rounded"
+                onClick={() => setShowCategoryModal(false)}
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                className="px-4 py-2 rounded text-white"
+                style={{ background: NAVY }}
+                onClick={async () => {
+                  setCategoryForm((prev) => ({
+                    ...prev,
+                    amount: prev.amount !== "" ? Number(prev.amount) : "",
+                    percent: prev.percent !== "" ? Number(prev.percent) : "",
+                  }));
+                  await saveCategory();
                 }}
-                className="w-full p-2 border rounded mt-1 mb-3"
-                placeholder="ex: 3000000"
-              />
-              <div className="mt-2 text-sm text-slate-600">
-                Preview nominal akan menjadi:{" "}
-                <strong>
-                  {formatRupiah(
-                    categoryForm.amount ? Number(categoryForm.amount) : 0
-                  )}
-                </strong>
-              </div>
-            </>
-          )}
-
-          <div className="flex justify-end gap-3 mt-4">
-            <button
-              onClick={() => {
-                setShowCategoryModal(false);
-                setEditingCategory(null);
-              }}
-              className="px-3 py-2 border rounded"
-            >
-              Batal
-            </button>
-            <button
-              onClick={handleCategorySubmit}
-              className={`px-3 py-2 rounded ${
-                categoryForm.type === "income"
-                  ? "bg-indigo-600 text-white"
-                  : "bg-red-600 text-white"
-              }`}
-            >
-              {editingCategory ? "Simpan" : "Tambah"}
-            </button>
+              >
+                Simpan
+              </button>
+            </div>
           </div>
         </Modal>
       )}
 
-      {/* Sub Modal */}
+      {/* ===================== Sub Modal ===================== */}
       {showSubModal && (
-        <Modal
-          onClose={() => {
-            setShowSubModal(false);
-            setEditingSub(null);
-            setSelectedCategoryForSub(null);
-            setSubForm({
-              name: "",
-              percent: "",
-              amount: "",
-              amountDisplay: "",
-            });
-          }}
-        >
-          <h3 className="text-lg font-medium mb-3">
-            {editingSub
-              ? `Edit Jenis (${selectedCategoryForSub?.category})`
-              : `Tambah Jenis untuk ${selectedCategoryForSub?.category}`}
-          </h3>
+        <Modal onClose={() => setShowSubModal(false)}>
+          <div className="max-w-xl" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-semibold mb-3">
+              {editingSub
+                ? "Edit Jenis"
+                : `Tambah Jenis untuk ${
+                    selectedCategoryForSub?.category || ""
+                  }`}
+            </h3>
 
-          <label className="text-sm text-slate-600">Nama jenis</label>
-          <input
-            className="p-2 w-full border rounded mt-1 mb-3"
-            placeholder="Nama jenis"
-            value={subForm.name}
-            onChange={(e) => setSubForm({ ...subForm, name: e.target.value })}
-          />
+            <label className="text-sm">Nama jenis</label>
+            <input
+              className="w-full p-2 border rounded mt-1 mb-3"
+              value={subForm.name}
+              onChange={(e) => setSubForm({ ...subForm, name: e.target.value })}
+            />
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-sm text-slate-600">
-                Persentase (% dari kategori)
-              </label>
-              <input
-                type="number"
-                min="0"
-                max="100"
-                step="0.1"
-                className="w-full p-2 border rounded mt-1"
-                placeholder="ex: 30"
-                value={subForm.percent}
-                onChange={(e) =>
-                  setSubForm({
-                    ...subForm,
-                    percent: e.target.value,
-                    amount: "",
-                    amountDisplay: "",
-                  })
-                }
-              />
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-sm">Persentase (%)</label>
+                <input
+                  className="w-full p-2 border rounded mt-1"
+                  type="number"
+                  min="0"
+                  max="100"
+                  value={subForm.percent}
+                  onChange={(e) =>
+                    setSubForm({
+                      ...subForm,
+                      percent: e.target.value,
+                      amount: "",
+                      amountDisplay: "",
+                    })
+                  }
+                />
+              </div>
+
+              <div>
+                <label className="text-sm">Nominal (Rp)</label>
+                <input
+                  className="w-full p-2 border rounded mt-1"
+                  value={subForm.amountDisplay}
+                  onChange={(e) => {
+                    const d = parseDigits(e.target.value);
+                    setSubForm({
+                      ...subForm,
+                      amount: d,
+                      amountDisplay: fmtInput(d),
+                      percent: "",
+                    });
+                  }}
+                />
+              </div>
             </div>
 
-            <div>
-              <label className="text-sm text-slate-600">Nominal (Rp)</label>
-              <input
-                type="text"
-                inputMode="numeric"
-                className="w-full p-2 border rounded mt-1"
-                placeholder="ex: 100000"
-                value={subForm.amountDisplay}
-                onChange={(e) => {
-                  const digits = parseInputToDigits(e.target.value);
-                  setSubForm({
-                    ...subForm,
-                    amount: digits,
-                    amountDisplay: formatNumberForInput(digits),
-                    percent: "",
-                  });
+            <div className="flex justify-end gap-3 mt-4">
+              <button
+                type="button"
+                className="px-4 py-2 border rounded"
+                onClick={() => setShowSubModal(false)}
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                className="px-4 py-2 rounded text-white"
+                style={{ background: NAVY }}
+                onClick={async () => {
+                  setSubForm((prev) => ({
+                    ...prev,
+                    amount: prev.amount !== "" ? Number(prev.amount) : "",
+                    percent: prev.percent !== "" ? Number(prev.percent) : "",
+                  }));
+                  await saveSubcategory();
                 }}
-              />
+              >
+                Simpan
+              </button>
             </div>
-          </div>
-
-          <div className="mt-3 text-sm text-slate-600">
-            <div>
-              Alokasi kategori (parent):{" "}
-              <strong>{formatRupiah(parentAllocatedLive)}</strong>
-            </div>
-            <div>
-              Sudah dialokasikan untuk jenis lain:{" "}
-              <strong>{formatRupiah(existingSubsSumLive)}</strong>
-            </div>
-            <div>
-              Sisa yang bisa dialokasikan:{" "}
-              <strong>{formatRupiah(remainingForSubsLive)}</strong>
-            </div>
-
-            <div className="mt-2">
-              Preview alokasi jenis baru:{" "}
-              <strong>
-                {subForm.percent
-                  ? formatRupiah(
-                      Math.round(
-                        (Number(subForm.percent || 0) / 100) *
-                          parentAllocatedLive
-                      )
-                    )
-                  : subForm.amount
-                  ? formatRupiah(Number(subForm.amount || 0))
-                  : "-"}
-              </strong>
-            </div>
-
-            <div className="mt-1">
-              Sisa setelah penambahan:{" "}
-              <strong>
-                {(() => {
-                  const proposed = subForm.percent
-                    ? Math.round(
-                        (Number(subForm.percent || 0) / 100) *
-                          parentAllocatedLive
-                      )
-                    : subForm.amount
-                    ? Number(subForm.amount || 0)
-                    : 0;
-                  return formatRupiah(
-                    Math.max(0, remainingForSubsLive - proposed)
-                  );
-                })()}
-              </strong>
-            </div>
-          </div>
-
-          <div className="flex justify-end gap-3 mt-4">
-            <button
-              onClick={() => {
-                setShowSubModal(false);
-                setEditingSub(null);
-                setSelectedCategoryForSub(null);
-              }}
-              className="px-3 py-2 border rounded"
-            >
-              Batal
-            </button>
-            <button
-              onClick={handleSaveSubcategory}
-              className="px-3 py-2 bg-red-600 text-white rounded"
-            >
-              Simpan
-            </button>
           </div>
         </Modal>
       )}
-    </>
+    </div>
   );
 }
 
-/* -------------------------
-   Modal component
-   ------------------------- */
+/* =========================
+   Modal component (fixed)
+   ========================= */
 function Modal({ children, onClose }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/30" onClick={onClose} />
-      <div className="relative z-50 w-full max-w-3xl">
-        <div className="bg-white p-6 rounded-lg shadow">{children}</div>
+      {/* overlay */}
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      {/* content */}
+      <div className="relative w-full max-w-xl">
+        <div
+          className="bg-white rounded-xl shadow-xl p-6"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {children}
+        </div>
+        {/* close btn */}
+        <button
+          onClick={onClose}
+          className="absolute -top-3 -right-3 bg-white rounded-full p-1 shadow border"
+          type="button"
+          aria-label="Close"
+        >
+          ✕
+        </button>
       </div>
     </div>
   );

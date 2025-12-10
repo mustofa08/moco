@@ -7,6 +7,8 @@ import {
   Trash2,
   Edit,
   Search as SearchIcon,
+  Wallet,
+  ArrowRightLeft,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
@@ -22,6 +24,9 @@ export default function Transaction() {
   const [search, setSearch] = useState("");
   const [walletFilter, setWalletFilter] = useState("all");
 
+  /* --------------------------------------------
+     INIT & REALTIME SYNC
+  -------------------------------------------- */
   useEffect(() => {
     let mounted = true;
 
@@ -45,21 +50,19 @@ export default function Transaction() {
         )
         .subscribe();
 
-      // also listen to debts/debt_payments because they can affect wallet choices or balances
+      // sync debts because could affect categories/wallets
       const subs = [
         supabase
           .channel("debts")
-          .on(
-            "postgres_changes",
-            { event: "*", schema: "public", table: "debts" },
-            () => mounted && loadTransactions()
+          .on("postgres_changes", { event: "*", table: "debts" }, () =>
+            mounted ? loadTransactions() : null
           )
           .subscribe(),
         supabase
           .channel("debt_payments")
           .on(
             "postgres_changes",
-            { event: "*", schema: "public", table: "debt_payments" },
+            { event: "*", table: "debt_payments" },
             () => mounted && loadTransactions()
           )
           .subscribe(),
@@ -76,6 +79,9 @@ export default function Transaction() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [month, year, search, walletFilter]);
 
+  /* --------------------------------------------
+     FETCH TRANSACTIONS
+  -------------------------------------------- */
   async function loadTransactions() {
     const start = `${year}-${String(month).padStart(2, "0")}-01`;
     const lastDay = new Date(year, month, 0).getDate();
@@ -86,16 +92,16 @@ export default function Transaction() {
     const user = (await supabase.auth.getUser()).data.user;
     if (!user) return;
 
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from("transactions")
       .select(
         `
         id, date, created_at, type, amount, note,
-        wallet_id, wallet:wallet_id (name),
-        transfer_from, from_wallet:transfer_from (name),
-        transfer_to_id, to_wallet:transfer_to_id (name),
-        category_id, category:category_id (category),
-        subcategory_id, subcategory:subcategory_id (name)
+        wallet_id, wallet:wallet_id(name),
+        transfer_from, from_wallet:transfer_from(name),
+        transfer_to_id, to_wallet:transfer_to_id(name),
+        category_id, category:category_id(category),
+        subcategory_id, subcategory:subcategory_id(name)
       `
       )
       .eq("user_id", user.id)
@@ -103,8 +109,6 @@ export default function Transaction() {
       .lte("date", end)
       .order("date", { ascending: false })
       .order("created_at", { ascending: false });
-
-    if (error) return console.error(error);
 
     const cleaned = (data || []).map((tx) => ({
       ...tx,
@@ -120,6 +124,9 @@ export default function Transaction() {
     applyFilter(cleaned);
   }
 
+  /* --------------------------------------------
+     FILTERING
+  -------------------------------------------- */
   function applyFilter(list) {
     const s = search.toLowerCase();
 
@@ -158,21 +165,21 @@ export default function Transaction() {
 
   async function deleteTx(id) {
     if (!confirm("Hapus transaksi ini?")) return;
-    try {
-      await supabase.from("transactions").delete().eq("id", id);
-      loadTransactions();
-    } catch (err) {
-      console.error(err);
-      alert("Gagal menghapus transaksi");
-    }
+    await supabase.from("transactions").delete().eq("id", id);
+    loadTransactions();
   }
 
+  /* --------------------------------------------
+     SUMMARY
+  -------------------------------------------- */
   const incomeSum = transactions
     .filter((t) => t.type === "income")
     .reduce((a, b) => a + Number(b.amount || 0), 0);
+
   const expenseSum = transactions
     .filter((t) => t.type === "expense")
     .reduce((a, b) => a + Number(b.amount || 0), 0);
+
   const netTotal = incomeSum - expenseSum;
 
   const walletOptions = useMemo(() => {
@@ -189,40 +196,56 @@ export default function Transaction() {
     month: "long",
   });
 
+  /* --------------------------------------------
+     UI RENDER
+  -------------------------------------------- */
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 p-4">
-      <div className="sticky top-0 pb-3 pt-2 bg-slate-50 dark:bg-slate-900 z-20">
-        <div className="flex justify-between items-center">
-          <button onClick={() => setMonth(month === 1 ? 12 : month - 1)}>
-            <ChevronLeft size={26} className="text-slate-600 dark:text-white" />
+    <div className="min-h-screen p-4 pb-24 bg-[#F3F7FA] dark:bg-slate-900">
+      {/* ----------------- HEADER ----------------- */}
+      <div className="sticky top-0 z-20 pb-4 bg-[#F3F7FA] dark:bg-slate-900">
+        <div className="bg-white dark:bg-slate-800 rounded-xl shadow p-4 flex items-center justify-between">
+          <button
+            onClick={() => setMonth(month === 1 ? 12 : month - 1)}
+            className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700"
+          >
+            <ChevronLeft className="text-slate-700 dark:text-white" size={24} />
           </button>
-          <h1 className="text-xl font-bold dark:text-white">
+
+          <h1 className="text-xl font-bold text-slate-800 dark:text-white">
             {monthName} {year}
           </h1>
-          <button onClick={() => setMonth(month === 12 ? 1 : month + 1)}>
+
+          <button
+            onClick={() => setMonth(month === 12 ? 1 : month + 1)}
+            className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700"
+          >
             <ChevronRight
-              size={26}
-              className="text-slate-600 dark:text-white"
+              className="text-slate-700 dark:text-white"
+              size={24}
             />
           </button>
         </div>
 
+        {/* Search & Filter */}
         <div className="flex gap-3 mt-4">
           <div className="relative flex-1">
             <SearchIcon className="absolute left-3 top-2.5 text-slate-400" />
             <input
               type="text"
-              placeholder="Cari catatan…"
+              placeholder="Cari catatan, kategori, wallet…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-full p-2 pl-10 rounded-lg border dark:bg-slate-800 dark:text-white"
+              className="w-full pl-10 p-2 rounded-lg border bg-white dark:bg-slate-800 dark:text-white shadow-sm"
             />
           </div>
 
           <select
             value={walletFilter}
             onChange={(e) => setWalletFilter(e.target.value)}
-            className="p-2 rounded-lg border dark:bg-slate-800 dark:text-white"
+            className="
+              p-2 rounded-lg border bg-white dark:bg-slate-800 dark:text-white 
+              shadow-sm cursor-pointer
+            "
           >
             <option value="all">Semua Wallet</option>
             {walletOptions.map((w) => (
@@ -234,35 +257,50 @@ export default function Transaction() {
         </div>
       </div>
 
-      <div className="flex justify-around bg-white dark:bg-slate-800 py-3 rounded-xl shadow mt-3">
-        <Summary label="Income" color="text-blue-600" value={incomeSum} />
+      {/* ----------------- SUMMARY ----------------- */}
+      <div className="grid grid-cols-3 gap-3 mt-2">
+        <Summary label="Income" color="text-green-600" value={incomeSum} />
         <Summary label="Expense" color="text-red-500" value={expenseSum} />
-        <Summary label="Total" color="dark:text-white" value={netTotal} />
+        <Summary
+          label="Total"
+          color="text-slate-700 dark:text-white"
+          value={netTotal}
+        />
       </div>
 
+      {/* ----------------- LIST ----------------- */}
       <div className="mt-6 space-y-6">
         {Object.entries(grouped).map(([date, txs]) => (
           <div key={date}>
-            <p className="font-semibold dark:text-white mb-1">
+            <p className="font-semibold text-slate-700 dark:text-slate-300 mb-1">
               {new Date(date).getDate()} {monthName}
             </p>
-            <div className="bg-white dark:bg-slate-800 rounded-xl shadow divide-y">
+
+            <div className="overflow-hidden rounded-xl bg-white dark:bg-slate-800 shadow">
               {txs.map((tx) => (
                 <div
                   key={tx.id}
-                  className="p-4 flex justify-between items-center group"
+                  className="
+                    p-4 flex justify-between items-center 
+                    hover:bg-slate-50 dark:hover:bg-slate-700 
+                    transition group
+                  "
                 >
+                  {/* LEFT */}
                   <div>
-                    <p className="text-sm font-medium dark:text-white">
+                    <p className="text-sm font-medium text-slate-800 dark:text-white">
                       {tx.note || "(Tanpa catatan)"}
                     </p>
-                    <p className="text-xs text-slate-500">
+
+                    <p className="text-xs text-slate-500 flex items-center gap-1">
                       {tx.type === "transfer" ? (
                         <>
-                          Transfer — {tx.walletFromName} → {tx.walletToName}
+                          <ArrowRightLeft size={14} /> {tx.walletFromName} →
+                          {tx.walletToName}
                         </>
                       ) : (
                         <>
+                          <Wallet size={14} />
                           {tx.categoryName}
                           {tx.type === "expense" &&
                             tx.subcategoryName !== "-" &&
@@ -272,13 +310,14 @@ export default function Transaction() {
                     </p>
                   </div>
 
+                  {/* RIGHT */}
                   <div className="text-right">
                     <p
                       className={`font-semibold ${
                         tx.type === "transfer"
-                          ? "text-black"
+                          ? "text-slate-700 dark:text-white"
                           : tx.type === "income"
-                          ? "text-blue-600"
+                          ? "text-green-600"
                           : "text-red-500"
                       }`}
                     >
@@ -286,7 +325,7 @@ export default function Transaction() {
                         ? "+"
                         : tx.type === "expense"
                         ? "-"
-                        : ""}{" "}
+                        : ""}
                       Rp {Number(tx.amount).toLocaleString()}
                     </p>
 
@@ -294,10 +333,11 @@ export default function Transaction() {
                       <button
                         onClick={() => navigate(`/transaction/edit/${tx.id}`)}
                       >
-                        <Edit size={16} className="text-blue-400" />
+                        <Edit size={16} className="text-blue-500" />
                       </button>
+
                       <button onClick={() => deleteTx(tx.id)}>
-                        <Trash2 size={16} className="text-red-400" />
+                        <Trash2 size={16} className="text-red-500" />
                       </button>
                     </div>
                   </div>
@@ -308,9 +348,14 @@ export default function Transaction() {
         ))}
       </div>
 
+      {/* ADD BUTTON */}
       <button
         onClick={() => navigate("/transaction/add")}
-        className="fixed bottom-20 right-4 bg-red-500 text-white p-4 rounded-full shadow-lg hover:bg-red-600 active:scale-95 transition z-50"
+        className="
+          fixed bottom-20 right-4 bg-blue-600 hover:bg-blue-700 
+          text-white p-4 rounded-full shadow-lg active:scale-95 
+          transition z-50
+        "
       >
         <Plus size={22} />
       </button>
@@ -318,10 +363,13 @@ export default function Transaction() {
   );
 }
 
+/* --------------------------------------------
+   SUMMARY CARD COMPONENT
+-------------------------------------------- */
 function Summary({ label, value, color }) {
   return (
-    <div className="text-center">
-      <p className="text-xs text-slate-500">{label}</p>
+    <div className="text-center rounded-xl p-3 bg-white dark:bg-slate-800 shadow">
+      <p className="text-xs text-slate-500 dark:text-slate-400">{label}</p>
       <p className={`font-semibold ${color}`}>
         Rp {Number(value).toLocaleString()}
       </p>

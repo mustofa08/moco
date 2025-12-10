@@ -1,8 +1,116 @@
 // src/pages/HutangPiutang.jsx
 import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
-import { Plus, X, Trash2, Edit, CreditCard } from "lucide-react";
 
+import { Plus, X, Trash2, Edit, CreditCard, GripVertical } from "lucide-react";
+
+// dnd-kit
+import {
+  DndContext,
+  PointerSensor,
+  TouchSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  DragOverlay,
+} from "@dnd-kit/core";
+
+import {
+  SortableContext,
+  useSortable,
+  arrayMove,
+  rectSortingStrategy,
+} from "@dnd-kit/sortable";
+
+import { CSS } from "@dnd-kit/utilities";
+
+/* -------------------------------------------------------------------
+   Helper Formatter
+------------------------------------------------------------------- */
+const fmt = (num) => Number(num || 0).toLocaleString("id-ID");
+const softGreen = "bg-[#E8F8F2]";
+const softRed = "bg-[#FDECEC]";
+const navy = "#052A3D";
+
+/* -------------------------------------------------------------------
+   Sortable Card Wrapper
+------------------------------------------------------------------- */
+function SortableDebtCard({ id, children }) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0 : 1,
+    zIndex: isDragging ? 50 : 1,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
+      {children}
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------
+   Drag Overlay — Full Soft Card
+------------------------------------------------------------------- */
+function DragCard({ item, wallets }) {
+  if (!item) return null;
+
+  const totalPaid = (item.debt_payments || []).reduce(
+    (s, p) => s + Number(p.amount),
+    0
+  );
+  const sisa = Number(item.amount) - totalPaid;
+
+  return (
+    <div
+      className={`
+        w-[320px] p-5 rounded-xl shadow-2xl border 
+        ${item.type === "hutang" ? softRed : softGreen}
+      `}
+      style={{ transform: "scale(1.05)" }}
+    >
+      <div className="flex items-start justify-between mb-3">
+        <div>
+          <p className="font-bold capitalize text-lg" style={{ color: navy }}>
+            {item.type}
+          </p>
+          <p className="text-sm text-slate-700">{item.name}</p>
+        </div>
+        <GripVertical className="opacity-40" />
+      </div>
+
+      <p className="text-sm">Total: {fmt(item.amount)}</p>
+      <p className="text-sm text-blue-700">Sudah bayar: {fmt(totalPaid)}</p>
+      <p className="text-sm text-red-600">Sisa: {fmt(sisa)}</p>
+
+      <p
+        className={`text-xs mt-2 ${
+          sisa <= 0 ? "text-green-600" : "text-orange-600"
+        }`}
+      >
+        {sisa <= 0 ? "Lunas" : "Belum Lunas"}
+      </p>
+
+      <p className="text-xs text-gray-600 mt-1">
+        Wallet: {wallets.find((w) => w.id === item.wallet_id)?.name}
+      </p>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------
+   MAIN PAGE
+------------------------------------------------------------------- */
 export default function HutangPiutang() {
   const [items, setItems] = useState([]);
   const [wallets, setWallets] = useState([]);
@@ -10,15 +118,16 @@ export default function HutangPiutang() {
 
   const [openForm, setOpenForm] = useState(false);
   const [openPay, setOpenPay] = useState(false);
+
   const [isEdit, setIsEdit] = useState(false);
-
-  // Payment edit
   const [isEditPayment, setIsEditPayment] = useState(false);
+
   const [editingPayment, setEditingPayment] = useState(null);
-
   const [selectedDebt, setSelectedDebt] = useState(null);
-  const [payments, setPayments] = useState([]);
 
+  const [activeItem, setActiveItem] = useState(null);
+
+  /* FORM STATE --------------------------------------------------- */
   const [form, setForm] = useState({
     id: null,
     type: "hutang",
@@ -35,60 +144,37 @@ export default function HutangPiutang() {
     wallet_id: "",
   });
 
-  // ======================== FORMATTER ===========================
-  const formatNumber = (value) => {
-    if (!value) return "";
-    return value.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
-  };
-  const unformatNumber = (value = "") => String(value).replace(/\./g, "");
+  /* FORMAT INPUT --------------------------------------------------- */
+  const formatNumber = (v) =>
+    v ? v.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".") : "";
+  const unformatNumber = (v = "") => v.replace(/\./g, "");
 
-  // ========================== FETCH =============================
+  /* SENSORS -------------------------------------------------------- */
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, {
+      activationConstraint: { delay: 80, tolerance: 8 },
+    })
+  );
+
+  /* FETCH DATA ----------------------------------------------------- */
   useEffect(() => {
-    fetchData();
+    fetchAll();
     fetchWallets();
-
-    // Subscribe realtime
-    const subs = [
-      supabase
-        .channel("debts")
-        .on("postgres_changes", { event: "*", table: "debts" }, fetchData)
-        .subscribe(),
-
-      supabase
-        .channel("debt_payments")
-        .on(
-          "postgres_changes",
-          { event: "*", table: "debt_payments" },
-          fetchData
-        )
-        .subscribe(),
-
-      supabase
-        .channel("wallets")
-        .on("postgres_changes", { event: "*", table: "wallets" }, fetchWallets)
-        .subscribe(),
-    ];
-
-    return () => subs.forEach((s) => supabase.removeChannel(s));
   }, [filter]);
 
-  async function fetchData() {
+  async function fetchAll() {
     const user = (await supabase.auth.getUser()).data.user;
-    if (!user) return;
-
     let query = supabase
       .from("debts")
       .select("*, debt_payments(*)")
-      .eq("user_id", user.id);
+      .eq("user_id", user.id)
+      .order("order_index");
 
     if (filter !== "all") query = query.eq("type", filter);
 
-    const { data, error } = await query.order("created_at", {
-      ascending: false,
-    });
-
-    if (error) console.error("fetch debts error:", error);
-    else setItems(data || []);
+    const { data } = await query;
+    setItems(data || []);
   }
 
   async function fetchWallets() {
@@ -102,197 +188,139 @@ export default function HutangPiutang() {
     setWallets(data || []);
   }
 
-  // ========================= VALIDASI =========================
-  const validateForm = () => {
+  /* SAVE DEBT ------------------------------------------------------ */
+  const saveData = async () => {
     if (!form.name.trim()) return alert("Nama wajib diisi");
     if (!form.amount) return alert("Jumlah wajib diisi");
-    if (!form.wallet_id) return alert("Pilih wallet terlebih dahulu");
-    if (!form.due_date) return alert("Tanggal jatuh tempo wajib diisi");
-    return true;
-  };
-
-  // ========================= SAVE / EDIT DEBT =========================
-  const saveData = async () => {
-    if (!validateForm()) return;
+    if (!form.wallet_id) return alert("Wallet wajib dipilih");
 
     const user = (await supabase.auth.getUser()).data.user;
-
-    const cleanAmount = Number(unformatNumber(form.amount));
-
     const payload = {
       type: form.type,
       name: form.name.trim(),
-      amount: cleanAmount,
-      remaining_amount: cleanAmount,
+      amount: Number(unformatNumber(form.amount)),
       due_date: form.due_date,
       note: form.note || null,
       wallet_id: form.wallet_id,
       user_id: user.id,
-      status: "belum_lunas",
     };
 
     if (isEdit) {
       await supabase.from("debts").update(payload).eq("id", form.id);
     } else {
+      payload.order_index = items.length; // for DnD
       await supabase.from("debts").insert(payload);
     }
 
-    closeForm();
-    fetchData();
-    fetchWallets();
-  };
-
-  // ========================= DELETE DEBT =========================
-  const deleteData = async (id) => {
-    if (!confirm("Hapus data ini?")) return;
-
-    await supabase.from("debts").delete().eq("id", id);
-    fetchData();
-    fetchWallets();
-  };
-
-  // ===================== POPUP FORM =====================
-  const openAdd = () => {
-    setIsEdit(false);
-    setForm({
-      id: null,
-      type: "hutang",
-      name: "",
-      amount: "",
-      due_date: "",
-      note: "",
-      wallet_id: "",
-    });
-    setOpenForm(true);
-  };
-
-  const openEdit = (item) => {
-    setIsEdit(true);
-    setForm({
-      id: item.id,
-      type: item.type,
-      name: item.name,
-      amount: formatNumber(item.amount),
-      due_date: item.due_date,
-      note: item.note,
-      wallet_id: item.wallet_id,
-    });
-    setOpenForm(true);
-  };
-
-  const closeForm = () => {
     setOpenForm(false);
-    setIsEdit(false);
+    fetchAll();
   };
 
-  // ===================== CICILAN =====================
-  const openPayment = (item) => {
-    setSelectedDebt(item);
-    setPayments(item.debt_payments || []);
-
-    // reset mode
-    setIsEditPayment(false);
-    setEditingPayment(null);
-
-    setPayment({ amount: "", note: "", wallet_id: "" });
-    setOpenPay(true);
+  /* DELETE DEBT ----------------------------------------------------- */
+  const deleteDebt = async (id) => {
+    if (!confirm("Hapus data ini?")) return;
+    await supabase.from("debts").delete().eq("id", id);
+    fetchAll();
   };
 
-  const openEditPayment = (p) => {
-    setIsEditPayment(true);
-    setEditingPayment(p);
-
-    setPayment({
-      amount: formatNumber(p.amount),
-      note: p.note || "",
-      wallet_id: p.wallet_id,
-    });
-
-    setOpenPay(true);
-  };
-
-  const deletePayment = async (id) => {
-    if (!confirm("Hapus pembayaran ini?")) return;
-
-    await supabase.from("debt_payments").delete().eq("id", id);
-
-    fetchData();
-    fetchWallets();
-
-    setPayments((prev) => prev.filter((p) => p.id !== id));
-  };
-
+  /* PAYMENT --------------------------------------------------------- */
   const savePayment = async () => {
-    if (!payment.wallet_id) return alert("Pilih wallet terlebih dahulu");
-    if (!payment.amount) return alert("Jumlah pembayaran wajib diisi");
+    if (!payment.wallet_id) return alert("Pilih wallet");
+    if (!payment.amount) return alert("Jumlah bayar wajib diisi");
 
     const user = (await supabase.auth.getUser()).data.user;
     const cleanAmount = Number(unformatNumber(payment.amount));
 
-    try {
-      if (isEditPayment) {
-        await supabase
-          .from("debt_payments")
-          .update({
-            amount: cleanAmount,
-            note: payment.note || null,
-            wallet_id: payment.wallet_id,
-          })
-          .eq("id", editingPayment.id);
-      } else {
-        await supabase.from("debt_payments").insert({
-          debt_id: selectedDebt.id,
-          user_id: user.id,
+    if (isEditPayment) {
+      await supabase
+        .from("debt_payments")
+        .update({
           amount: cleanAmount,
-          note: payment.note || null,
           wallet_id: payment.wallet_id,
-        });
-      }
-
-      setOpenPay(false);
-      setIsEditPayment(false);
-      setEditingPayment(null);
-
-      fetchData();
-      fetchWallets();
-    } catch (err) {
-      console.error("savePayment error:", err);
+          note: payment.note || null,
+        })
+        .eq("id", editingPayment.id);
+    } else {
+      await supabase.from("debt_payments").insert({
+        debt_id: selectedDebt.id,
+        user_id: user.id,
+        amount: cleanAmount,
+        wallet_id: payment.wallet_id,
+        note: payment.note || null,
+      });
     }
+
+    setOpenPay(false);
+    setIsEditPayment(false);
+    fetchAll();
   };
 
-  // ========================= SUMMARY =========================
+  const deletePayment = async (id) => {
+    if (!confirm("Hapus pembayaran?")) return;
+    await supabase.from("debt_payments").delete().eq("id", id);
+    fetchAll();
+  };
+
+  /* DnD -------------------------------------------------------------- */
+  function onDragStart(e) {
+    const itm = items.find((x) => x.id === e.active.id);
+    setActiveItem(itm);
+  }
+
+  async function onDragEnd(e) {
+    const { active, over } = e;
+    setActiveItem(null);
+    if (!over || active.id === over.id) return;
+
+    const oldIndex = items.findIndex((x) => x.id === active.id);
+    const newIndex = items.findIndex((x) => x.id === over.id);
+
+    const newList = arrayMove(items, oldIndex, newIndex);
+    setItems(newList);
+
+    await Promise.all(
+      newList.map((it, i) =>
+        supabase.from("debts").update({ order_index: i }).eq("id", it.id)
+      )
+    );
+  }
+
+  /* TOTALS ----------------------------------------------------------- */
   const totalHutang = items
-    .filter((v) => v.type === "hutang")
-    .reduce((s, v) => s + Number(v.remaining_amount || 0), 0);
+    .filter((x) => x.type === "hutang")
+    .reduce((s, v) => s + Number(v.amount || 0), 0);
 
   const totalPiutang = items
-    .filter((v) => v.type === "piutang")
-    .reduce((s, v) => s + Number(v.remaining_amount || 0), 0);
+    .filter((x) => x.type === "piutang")
+    .reduce((s, v) => s + Number(v.amount || 0), 0);
 
-  // ========================= RENDER =========================
+  /* -------------------------------------------------------------------
+     RENDER
+  ------------------------------------------------------------------- */
   return (
-    <div className="p-4 space-y-4">
+    <div className="w-full p-4 pb-24 space-y-4">
       {/* SUMMARY */}
-      <div className="grid grid-cols-2 gap-3">
-        <div className="p-4 bg-red-100 text-red-700 rounded shadow">
+      <div className="grid grid-cols-2 gap-4">
+        <div className="p-4 rounded-xl shadow bg-[#FDECEC] text-red-700">
           <p className="font-semibold">Total Hutang</p>
-          <p className="text-xl font-bold">{totalHutang.toLocaleString()}</p>
+          <p className="text-xl font-bold">{fmt(totalHutang)}</p>
         </div>
-
-        <div className="p-4 bg-green-100 text-green-700 rounded shadow">
+        <div className="p-4 rounded-xl shadow bg-[#E8F8F2] text-green-700">
           <p className="font-semibold">Total Piutang</p>
-          <p className="text-xl font-bold">{totalPiutang.toLocaleString()}</p>
+          <p className="text-xl font-bold">{fmt(totalPiutang)}</p>
         </div>
       </div>
 
-      {/* FILTER */}
-      <div className="flex gap-2">
+      {/* FILTER + ADD BUTTON */}
+      <div className="flex gap-2 items-center">
         {["all", "hutang", "piutang"].map((f) => (
           <button
             key={f}
             onClick={() => setFilter(f)}
-            className={`px-3 py-1 rounded ${
-              filter === f ? "bg-blue-600 text-white" : "bg-gray-200"
+            className={`px-4 py-1.5 rounded-full text-sm ${
+              filter === f
+                ? "bg-blue-600 text-white"
+                : "bg-gray-200 text-gray-700"
             }`}
           >
             {f === "all" ? "Semua" : f.charAt(0).toUpperCase() + f.slice(1)}
@@ -300,132 +328,209 @@ export default function HutangPiutang() {
         ))}
 
         <button
-          onClick={openAdd}
-          className="ml-auto bg-blue-600 text-white px-3 py-1 rounded flex items-center gap-1"
+          onClick={() => {
+            setIsEdit(false);
+            setForm({
+              id: null,
+              type: "hutang",
+              name: "",
+              amount: "",
+              due_date: "",
+              note: "",
+              wallet_id: "",
+            });
+            setOpenForm(true);
+          }}
+          className="ml-auto bg-blue-600 text-white px-4 py-1.5 rounded flex items-center gap-1"
         >
           <Plus size={18} /> Tambah
         </button>
       </div>
 
-      {/* LIST */}
-      <div className="space-y-3">
-        {items.map((item) => {
-          const totalPaid = (item.debt_payments || []).reduce(
-            (s, p) => s + Number(p.amount || 0),
-            0
-          );
-          const sisa = Number(item.amount) - totalPaid;
+      {/* DnD LIST */}
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
+      >
+        <SortableContext
+          items={items.map((v) => v.id)}
+          strategy={rectSortingStrategy}
+        >
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-4">
+            {items.map((item) => {
+              const paid = (item.debt_payments || []).reduce(
+                (s, p) => s + Number(p.amount || 0),
+                0
+              );
+              const sisa = item.amount - paid;
 
-          return (
-            <div
-              key={item.id}
-              className="p-4 bg-white border rounded-lg shadow-sm space-y-2"
-            >
-              <div className="flex justify-between">
-                <div>
-                  <p className="font-semibold capitalize">{item.type}</p>
-                  <p>{item.name}</p>
-
-                  <p className="text-sm">
-                    Total: {Number(item.amount).toLocaleString()}
-                  </p>
-                  <p className="text-sm text-blue-600">
-                    Sudah bayar: {totalPaid.toLocaleString()}
-                  </p>
-                  <p className="text-sm text-red-600">
-                    Sisa: {sisa.toLocaleString()}
-                  </p>
-
-                  <p
-                    className={`text-xs mt-1 ${
-                      sisa <= 0 ? "text-green-600" : "text-orange-600"
-                    }`}
+              return (
+                <SortableDebtCard key={item.id} id={item.id}>
+                  <div
+                    className={`
+                      p-4 rounded-xl shadow-sm border
+                      ${item.type === "hutang" ? softRed : softGreen}
+                    `}
                   >
-                    {sisa <= 0 ? "Status: Lunas" : "Status: Belum Lunas"}
-                  </p>
-
-                  <p className="text-xs text-gray-500">
-                    Wallet:{" "}
-                    {wallets.find((w) => w.id === item.wallet_id)?.name ?? "-"}
-                  </p>
-
-                  {item.note && (
-                    <p className="text-xs text-gray-500 mt-1">{item.note}</p>
-                  )}
-                </div>
-
-                <div className="flex flex-col gap-2">
-                  <button
-                    onClick={() => openPayment(item)}
-                    className="text-green-600 flex items-center gap-1"
-                  >
-                    <CreditCard size={16} /> Bayar
-                  </button>
-                  <button
-                    onClick={() => openEdit(item)}
-                    className="text-blue-600"
-                  >
-                    <Edit size={18} />
-                  </button>
-                  <button
-                    onClick={() => deleteData(item.id)}
-                    className="text-red-600"
-                  >
-                    <Trash2 size={18} />
-                  </button>
-                </div>
-              </div>
-
-              {/* HISTORY */}
-              <div className="mt-2 border-t pt-2 space-y-1">
-                <p className="text-xs font-semibold">Riwayat Pembayaran:</p>
-
-                {item.debt_payments?.length === 0 ? (
-                  <p className="text-xs text-gray-400">Belum ada pembayaran</p>
-                ) : (
-                  item.debt_payments.map((p) => (
-                    <div
-                      key={p.id}
-                      className="p-2 bg-gray-100 rounded flex justify-between items-center"
-                    >
+                    <div className="flex justify-between">
+                      {/* LEFT */}
                       <div>
-                        <p>{Number(p.amount).toLocaleString()}</p>
-                        {p.note && (
-                          <p className="text-xs text-gray-500">{p.note}</p>
-                        )}
-                        <p className="text-xs">
-                          {new Date(p.paid_at || p.created_at).toLocaleString()}
+                        <p
+                          className="font-bold capitalize text-lg"
+                          style={{ color: navy }}
+                        >
+                          {item.type}
+                        </p>
+                        <p className="text-sm">{item.name}</p>
+
+                        <p className="text-sm mt-1">
+                          Total: {fmt(item.amount)}
+                        </p>
+                        <p className="text-sm text-blue-700">
+                          Sudah bayar: {fmt(paid)}
+                        </p>
+                        <p className="text-sm text-red-600">
+                          Sisa: {fmt(sisa)}
+                        </p>
+
+                        <p
+                          className={`text-xs mt-1 ${
+                            sisa <= 0 ? "text-green-600" : "text-orange-600"
+                          }`}
+                        >
+                          {sisa <= 0 ? "Lunas" : "Belum Lunas"}
+                        </p>
+
+                        <p className="text-xs text-gray-600 mt-1">
+                          Wallet:{" "}
+                          {wallets.find((w) => w.id === item.wallet_id)?.name}
                         </p>
                       </div>
 
-                      <div className="flex flex-col gap-1">
+                      {/* ACTIONS */}
+                      <div className="flex flex-col gap-1 items-end">
+                        <GripVertical className="opacity-40 mb-2" />
+
                         <button
-                          onClick={() => openEditPayment(p)}
-                          className="text-blue-600 text-xs"
+                          onClick={() => {
+                            setSelectedDebt(item);
+                            setIsEditPayment(false);
+                            setPayment({ amount: "", note: "", wallet_id: "" });
+                            setOpenPay(true);
+                          }}
+                          className="text-green-600 flex items-center gap-1 text-sm"
                         >
-                          Edit
+                          <CreditCard size={16} /> Bayar
                         </button>
+
                         <button
-                          onClick={() => deletePayment(p.id)}
-                          className="text-red-600 text-xs"
+                          onClick={() => {
+                            setIsEdit(true);
+                            setForm({
+                              id: item.id,
+                              type: item.type,
+                              name: item.name,
+                              amount: formatNumber(item.amount),
+                              due_date: item.due_date,
+                              note: item.note,
+                              wallet_id: item.wallet_id,
+                            });
+                            setOpenForm(true);
+                          }}
+                          className="text-blue-600 text-sm"
                         >
-                          Hapus
+                          <Edit size={18} />
+                        </button>
+
+                        <button
+                          onClick={() => deleteDebt(item.id)}
+                          className="text-red-600 text-sm"
+                        >
+                          <Trash2 size={18} />
                         </button>
                       </div>
                     </div>
-                  ))
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
 
-      {/* POPUP ADD/EDIT DEBT */}
+                    {/* HISTORY */}
+                    <div className="mt-3 border-t pt-2 space-y-2">
+                      <p className="text-xs font-semibold">
+                        Riwayat Pembayaran:
+                      </p>
+
+                      {(item.debt_payments || []).length === 0 && (
+                        <p className="text-xs text-gray-500">
+                          Belum ada pembayaran
+                        </p>
+                      )}
+
+                      {(item.debt_payments || []).map((p) => (
+                        <div
+                          key={p.id}
+                          className="p-2 rounded bg-white border flex justify-between items-center"
+                        >
+                          <div>
+                            <p>{fmt(p.amount)}</p>
+                            {p.note && (
+                              <p className="text-xs text-gray-500">{p.note}</p>
+                            )}
+                            <p className="text-xs">
+                              {new Date(
+                                p.paid_at || p.created_at
+                              ).toLocaleString()}
+                            </p>
+                          </div>
+
+                          <div className="flex flex-col gap-1">
+                            <button
+                              onClick={() => {
+                                setSelectedDebt(item);
+                                setIsEditPayment(true);
+                                setEditingPayment(p);
+                                setPayment({
+                                  amount: formatNumber(p.amount),
+                                  note: p.note || "",
+                                  wallet_id: p.wallet_id,
+                                });
+                                setOpenPay(true);
+                              }}
+                              className="text-blue-600 text-xs"
+                            >
+                              Edit
+                            </button>
+
+                            <button
+                              onClick={() => deletePayment(p.id)}
+                              className="text-red-600 text-xs"
+                            >
+                              Hapus
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </SortableDebtCard>
+              );
+            })}
+          </div>
+        </SortableContext>
+
+        {/* DRAG OVERLAY */}
+        <DragOverlay>
+          {activeItem && <DragCard item={activeItem} wallets={wallets} />}
+        </DragOverlay>
+      </DndContext>
+
+      {/* ============= FORM MODAL ============= */}
       {openForm && (
-        <div className="fixed inset-0 bg-black/20 backdrop-blur-sm flex items-center justify-center">
-          <div className="bg-white p-5 w-80 rounded shadow relative">
-            <button className="absolute top-2 right-2" onClick={closeForm}>
+        <div className="fixed inset-0 bg-black/20 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white p-6 w-80 rounded-xl shadow relative">
+            <button
+              className="absolute top-2 right-2"
+              onClick={() => setOpenForm(false)}
+            >
               <X />
             </button>
 
@@ -503,10 +608,10 @@ export default function HutangPiutang() {
         </div>
       )}
 
-      {/* POPUP ADD/EDIT PAYMENT */}
+      {/* ============= PAYMENT MODAL ============= */}
       {openPay && (
-        <div className="fixed inset-0 bg-black/20 backdrop-blur-sm flex items-center justify-center">
-          <div className="bg-white p-5 w-80 rounded shadow relative">
+        <div className="fixed inset-0 bg-black/20 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white p-6 w-80 rounded-xl shadow relative">
             <button
               className="absolute top-2 right-2"
               onClick={() => setOpenPay(false)}
@@ -519,11 +624,7 @@ export default function HutangPiutang() {
             </h2>
 
             <p className="text-sm mb-2">
-              <strong>{selectedDebt?.name}</strong> — Sisa:{" "}
-              {(
-                Number(selectedDebt?.amount || 0) -
-                payments.reduce((s, p) => s + Number(p.amount || 0), 0)
-              ).toLocaleString()}
+              <strong>{selectedDebt?.name}</strong>
             </p>
 
             <div className="space-y-3">
@@ -569,41 +670,6 @@ export default function HutangPiutang() {
               >
                 {isEditPayment ? "Update Pembayaran" : "Bayar Cicilan"}
               </button>
-            </div>
-
-            {/* HISTORY */}
-            <div className="mt-4 border-t pt-3 space-y-2 max-h-40 overflow-auto">
-              {payments.map((p) => (
-                <div
-                  key={p.id}
-                  className="p-2 bg-gray-100 rounded flex justify-between items-center"
-                >
-                  <div>
-                    <p>{Number(p.amount).toLocaleString()}</p>
-                    {p.note && (
-                      <p className="text-xs text-gray-500">{p.note}</p>
-                    )}
-                    <p className="text-xs">
-                      {new Date(p.paid_at || p.created_at).toLocaleString()}
-                    </p>
-                  </div>
-
-                  <div className="flex flex-col gap-1">
-                    <button
-                      onClick={() => openEditPayment(p)}
-                      className="text-blue-600 text-xs"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => deletePayment(p.id)}
-                      className="text-red-600 text-xs"
-                    >
-                      Hapus
-                    </button>
-                  </div>
-                </div>
-              ))}
             </div>
           </div>
         </div>

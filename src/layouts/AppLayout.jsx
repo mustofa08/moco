@@ -6,16 +6,23 @@ export default function AppLayout() {
   const [collapsed, setCollapsed] = useState(false);
 
   return (
-    <>
+    <div className="flex bg-[#F3F7FA] min-h-screen">
+      {/* NAVBAR */}
       <Navbar collapsed={collapsed} setCollapsed={setCollapsed} />
 
-      <div
-        className={`min-h-screen p-4 bg-slate-50 dark:bg-slate-900 transition-all duration-300 ${
-          collapsed ? "lg:ml-20" : "lg:ml-64"
-        }`}
+      {/* MAIN CONTENT */}
+      <main
+        className={`
+          flex-1 transition-all duration-300 
+          p-4 sm:p-6 
+          ${collapsed ? "lg:ml-20" : "lg:ml-64"}
+        `}
       >
-        <Outlet />
-      </div>
-    </>
+        {/* CONTENT WRAPPER */}
+        <div className="max-w-6xl mx-auto">
+          <Outlet />
+        </div>
+      </main>
+    </div>
   );
 }
