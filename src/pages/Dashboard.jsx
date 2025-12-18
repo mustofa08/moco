@@ -590,7 +590,7 @@ export default function Dashboard() {
             </div>
 
             <div className="space-y-3 overflow-auto pr-1">
-              {goals.map((g) => {
+              {goals.map((g, i) => {
                 const saved = (txAll || [])
                   .filter((t) => t.wallet_id === g.wallet_id)
                   .reduce((a, b) => a + Number(b.amount || 0), 0);
@@ -601,20 +601,58 @@ export default function Dashboard() {
                 );
 
                 return (
-                  <div key={g.id}>
-                    <div className="flex justify-between text-sm">
-                      <span>{g.name}</span>
-                      <span className="font-medium">{pct}%</span>
-                    </div>
-                    <div className="text-xs text-slate-500">
-                      {formatRupiah(saved)} / {formatRupiah(g.target_amount)}
+                  <div
+                    key={g.id}
+                    className="p-3 rounded-xl bg-slate-50 border border-slate-200 shadow-sm hover:shadow-md transition-all"
+                  >
+                    <div className="flex items-center justify-between">
+                      {/* Left */}
+                      <div className="flex items-center gap-3">
+                        {/* Soft Icon */}
+                        <div
+                          className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold shadow"
+                          style={{
+                            background: [
+                              "#0ea5e9",
+                              "#10b981",
+                              "#6366f1",
+                              "#f97316",
+                            ][i % 4],
+                          }}
+                        >
+                          {g.name.charAt(0).toUpperCase()}
+                        </div>
+
+                        <span className="font-medium text-slate-800 truncate max-w-[120px]">
+                          {g.name}
+                        </span>
+                      </div>
+
+                      {/* Percent */}
+                      <span className="text-sm font-semibold text-slate-700">
+                        {pct}%
+                      </span>
                     </div>
 
-                    <div className="h-2 bg-slate-200 rounded-full overflow-hidden mt-1">
+                    {/* Amount */}
+                    <p className="text-xs text-slate-500 mt-1">
+                      {formatRupiah(saved)} / {formatRupiah(g.target_amount)}
+                    </p>
+
+                    {/* Progress Bar */}
+                    <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden mt-2">
                       <div
-                        className="h-2 bg-green-500"
-                        style={{ width: `${pct}%` }}
-                      />
+                        className="h-full rounded-full transition-all"
+                        style={{
+                          width: `${pct}%`,
+                          background: [
+                            "#0ea5e9",
+                            "#10b981",
+                            "#6366f1",
+                            "#f97316",
+                          ][i % 4],
+                        }}
+                      ></div>
                     </div>
                   </div>
                 );
