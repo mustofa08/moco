@@ -1052,6 +1052,7 @@ export default function Budget() {
 
             <label className="text-sm">Nama jenis</label>
             <input
+              autoFocus
               className="w-full p-2 border rounded mt-1 mb-3"
               value={subForm.name}
               onChange={(e) => setSubForm({ ...subForm, name: e.target.value })}
