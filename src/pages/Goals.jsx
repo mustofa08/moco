@@ -88,6 +88,19 @@ export default function Goals() {
     })
   );
 
+  useEffect(() => {
+    if (!openForm) return;
+
+    function handleEsc(e) {
+      if (e.key === "Escape") {
+        setOpenForm(false);
+      }
+    }
+
+    window.addEventListener("keydown", handleEsc);
+    return () => window.removeEventListener("keydown", handleEsc);
+  }, [openForm]);
+
   /* FETCH GOALS */
   const fetchAll = useCallback(async () => {
     setLoading(true);
@@ -211,7 +224,11 @@ export default function Goals() {
             className="absolute inset-0 bg-black/40 backdrop-blur-sm"
             onClick={() => setOpenForm(false)}
           />
-          <div className="relative w-full max-w-lg z-50">
+
+          <div
+            className="relative w-full max-w-lg z-50"
+            onClick={(e) => e.stopPropagation()}
+          >
             <GoalForm
               goal={editing}
               onSaved={() => {

@@ -917,7 +917,21 @@ export default function Budget() {
       {/* ===================== Category Modal ===================== */}
       {showCategoryModal && (
         <Modal onClose={() => setShowCategoryModal(false)}>
-          <div className="max-w-xl" onClick={(e) => e.stopPropagation()}>
+          <form
+            className="max-w-xl"
+            onClick={(e) => e.stopPropagation()}
+            onSubmit={async (e) => {
+              e.preventDefault();
+
+              setCategoryForm((prev) => ({
+                ...prev,
+                amount: prev.amount !== "" ? Number(prev.amount) : "",
+                percent: prev.percent !== "" ? Number(prev.percent) : "",
+              }));
+
+              await saveCategory();
+            }}
+          >
             <h3 className="text-lg font-semibold mb-3">
               {editingCategory
                 ? "Edit Kategori"
@@ -999,29 +1013,35 @@ export default function Budget() {
                 Batal
               </button>
               <button
-                type="button"
+                type="submit"
                 className="px-4 py-2 rounded text-white"
                 style={{ background: NAVY }}
-                onClick={async () => {
-                  setCategoryForm((prev) => ({
-                    ...prev,
-                    amount: prev.amount !== "" ? Number(prev.amount) : "",
-                    percent: prev.percent !== "" ? Number(prev.percent) : "",
-                  }));
-                  await saveCategory();
-                }}
               >
                 Simpan
               </button>
             </div>
-          </div>
+          </form>
         </Modal>
       )}
 
       {/* ===================== Sub Modal ===================== */}
       {showSubModal && (
         <Modal onClose={() => setShowSubModal(false)}>
-          <div className="max-w-xl" onClick={(e) => e.stopPropagation()}>
+          <form
+            className="max-w-xl"
+            onClick={(e) => e.stopPropagation()}
+            onSubmit={async (e) => {
+              e.preventDefault();
+
+              setSubForm((prev) => ({
+                ...prev,
+                amount: prev.amount !== "" ? Number(prev.amount) : "",
+                percent: prev.percent !== "" ? Number(prev.percent) : "",
+              }));
+
+              await saveSubcategory();
+            }}
+          >
             <h3 className="text-lg font-semibold mb-3">
               {editingSub
                 ? "Edit Jenis"
@@ -1084,22 +1104,14 @@ export default function Budget() {
                 Batal
               </button>
               <button
-                type="button"
+                type="submit"
                 className="px-4 py-2 rounded text-white"
                 style={{ background: NAVY }}
-                onClick={async () => {
-                  setSubForm((prev) => ({
-                    ...prev,
-                    amount: prev.amount !== "" ? Number(prev.amount) : "",
-                    percent: prev.percent !== "" ? Number(prev.percent) : "",
-                  }));
-                  await saveSubcategory();
-                }}
               >
                 Simpan
               </button>
             </div>
-          </div>
+          </form>
         </Modal>
       )}
     </div>
@@ -1110,10 +1122,22 @@ export default function Budget() {
    Modal component (fixed)
    ========================= */
 function Modal({ children, onClose }) {
+  useEffect(() => {
+    function handleKey(e) {
+      if (e.key === "Escape") {
+        onClose();
+      }
+    }
+
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [onClose]);
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* overlay */}
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+
       {/* content */}
       <div className="relative w-full max-w-xl">
         <div
@@ -1122,6 +1146,7 @@ function Modal({ children, onClose }) {
         >
           {children}
         </div>
+
         {/* close btn */}
         <button
           onClick={onClose}

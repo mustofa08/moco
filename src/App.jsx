@@ -11,7 +11,7 @@ import Transaction from "./pages/Transaction";
 import AddTransactionPage from "./pages/transaction/AddTransaction";
 import EditTransactionPage from "./pages/transaction/EditTransaction";
 import Wallets from "./pages/Wallets";
-import Loan from "./pages/HutangPiutang";
+import Loan from "./pages/Loan";
 
 import AppLayout from "./layouts/AppLayout";
 import ProtectedRoute from "./pages/routes/ProtectedRoute";

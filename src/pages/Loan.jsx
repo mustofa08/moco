@@ -1,4 +1,3 @@
-// src/pages/HutangPiutang.jsx
 import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
 
@@ -111,7 +110,7 @@ function DragCard({ item, wallets }) {
 /* -------------------------------------------------------------------
    MAIN PAGE
 ------------------------------------------------------------------- */
-export default function HutangPiutang() {
+export default function Loan() {
   const [items, setItems] = useState([]);
   const [wallets, setWallets] = useState([]);
   const [filter, setFilter] = useState("all");
@@ -156,6 +155,30 @@ export default function HutangPiutang() {
       activationConstraint: { delay: 80, tolerance: 8 },
     })
   );
+
+  useEffect(() => {
+    function handleKey(e) {
+      if (e.key === "Escape") {
+        if (openForm) setOpenForm(false);
+        if (openPay) setOpenPay(false);
+      }
+
+      if (e.key === "Enter") {
+        if (openForm) {
+          e.preventDefault();
+          saveData();
+        }
+
+        if (openPay) {
+          e.preventDefault();
+          savePayment();
+        }
+      }
+    }
+
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [openForm, openPay, form, payment]);
 
   /* FETCH DATA ----------------------------------------------------- */
   useEffect(() => {
@@ -564,6 +587,7 @@ export default function HutangPiutang() {
               </select>
 
               <input
+                autoFocus
                 type="text"
                 placeholder="Nama"
                 className="border p-2 rounded w-full"
@@ -572,6 +596,7 @@ export default function HutangPiutang() {
               />
 
               <input
+                required
                 type="text"
                 placeholder="Jumlah"
                 className="border p-2 rounded w-full"
@@ -595,6 +620,9 @@ export default function HutangPiutang() {
                 className="border p-2 rounded w-full"
                 value={form.note}
                 onChange={(e) => setForm({ ...form, note: e.target.value })}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") e.stopPropagation();
+                }}
               />
 
               <button

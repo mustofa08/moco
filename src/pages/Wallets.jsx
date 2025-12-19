@@ -84,6 +84,19 @@ export default function Wallets() {
     })
   );
 
+  useEffect(() => {
+    if (!modalOpen) return;
+
+    function handleEsc(e) {
+      if (e.key === "Escape") {
+        setModalOpen(false);
+      }
+    }
+
+    window.addEventListener("keydown", handleEsc);
+    return () => window.removeEventListener("keydown", handleEsc);
+  }, [modalOpen]);
+
   /* Fetch Wallets */
   useEffect(() => {
     fetchWallets();
@@ -278,9 +291,9 @@ export default function Wallets() {
                     {menuOpenId === w.wallet_id && (
                       <div
                         className="
-      absolute right-3 top-11 z-40 w-40 bg-white rounded-xl 
-      shadow-lg border border-slate-200 overflow-hidden
-    "
+                            absolute right-3 top-11 z-40 w-40 bg-white rounded-xl 
+                            shadow-lg border border-slate-200 overflow-hidden
+                          "
                       >
                         {/* EDIT */}
                         <button
@@ -337,8 +350,18 @@ export default function Wallets() {
 
       {/* MODAL */}
       {modalOpen && (
-        <div className="fixed inset-0 bg-black/50 z-[999] flex items-center justify-center">
-          <div className="bg-white p-6 rounded-xl w-full max-w-md shadow-xl">
+        <div
+          className="fixed inset-0 bg-black/50 z-[999] flex items-center justify-center"
+          onClick={() => setModalOpen(false)}
+        >
+          <form
+            className="bg-white p-6 rounded-xl w-full max-w-md shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+            onSubmit={async (e) => {
+              e.preventDefault();
+              await saveWallet();
+            }}
+          >
             <h2 className="text-lg font-semibold mb-4">
               {editingWallet ? "Edit Wallet" : "Tambah Wallet"}
             </h2>
@@ -347,24 +370,27 @@ export default function Wallets() {
               className="w-full border p-3 rounded mb-4 text-sm"
               placeholder="Nama wallet…"
               value={name}
+              autoFocus
               onChange={(e) => setName(e.target.value)}
             />
 
             <div className="flex justify-end gap-2">
               <button
+                type="button"
                 onClick={() => setModalOpen(false)}
                 className="px-3 py-2 border rounded"
               >
                 Batal
               </button>
+
               <button
+                type="submit"
                 className="px-4 py-2 bg-[#052A3D] text-white rounded"
-                onClick={saveWallet}
               >
                 Simpan
               </button>
             </div>
-          </div>
+          </form>
         </div>
       )}
     </div>

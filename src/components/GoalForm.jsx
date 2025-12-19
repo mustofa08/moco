@@ -25,6 +25,18 @@ export default function GoalForm({
   const [walletId, setWalletId] = useState(goal?.wallet_id || "");
   const [wallets, setWallets] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    function handleKey(e) {
+      if (e.key === "Escape") {
+        onCancel();
+      }
+    }
+
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [onCancel]);
 
   useEffect(() => {
     loadWallets();
@@ -53,6 +65,7 @@ export default function GoalForm({
     setTargetAmountDisplay(
       numeric ? new Intl.NumberFormat("id-ID").format(Number(numeric)) : ""
     );
+    setError("");
   }
 
   function onChangeSavingAmount(e) {
@@ -60,10 +73,13 @@ export default function GoalForm({
     setSavingAmountDisplay(
       numeric ? new Intl.NumberFormat("id-ID").format(Number(numeric)) : ""
     );
+    setError("");
   }
 
   async function handleSubmit(e) {
     e.preventDefault();
+
+    setError("");
     const u = (await supabase.auth.getUser())?.data?.user;
     if (!u) return alert("User belum login");
 
@@ -78,10 +94,20 @@ export default function GoalForm({
       wallet_id: walletId || null,
     };
 
-    if (!payload.name) return alert("Nama goal wajib diisi");
-    if (!payload.target_amount || payload.target_amount <= 0)
-      return alert("Target amount harus lebih dari 0");
-    if (!payload.wallet_id) return alert("Pilih wallet");
+    if (!name.trim()) {
+      setError("Nama goal wajib diisi");
+      return;
+    }
+
+    if (!unformatNumber(targetAmountDisplay)) {
+      setError("Target amount harus diisi");
+      return;
+    }
+
+    if (!walletId) {
+      setError("Pilih wallet terlebih dahulu");
+      return;
+    }
 
     setLoading(true);
     try {
@@ -117,7 +143,12 @@ export default function GoalForm({
             <label className="text-sm text-slate-600">Nama Goal</label>
             <input
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              autoFocus
+              required
+              onChange={(e) => {
+                setName(e.target.value);
+                setError("");
+              }}
               className="w-full border rounded-lg p-3 mt-1 focus:ring-2 focus:ring-[##052A3D]/40"
               placeholder="Contoh: Beli Laptop"
             />
@@ -151,6 +182,7 @@ export default function GoalForm({
               <span className="mr-2 text-slate-500">Rp</span>
               <input
                 value={targetAmountDisplay}
+                required
                 onChange={onChangeTarget}
                 inputMode="numeric"
                 className="w-full bg-transparent outline-none"
@@ -192,7 +224,10 @@ export default function GoalForm({
             <label className="text-sm text-slate-600">Frequency</label>
             <select
               value={savingFrequency}
-              onChange={(e) => setSavingFrequency(e.target.value)}
+              onChange={(e) => {
+                setSavingFrequency(e.target.value);
+                setError("");
+              }}
               className="border rounded-lg p-3 mt-1 w-full bg-slate-50"
             >
               <option value="weekly">Weekly</option>
@@ -219,7 +254,11 @@ export default function GoalForm({
             <label className="text-sm text-slate-600">Wallet</label>
             <select
               value={walletId}
-              onChange={(e) => setWalletId(e.target.value)}
+              required
+              onChange={(e) => {
+                setWalletId(e.target.value);
+                setError("");
+              }}
               className="border rounded-lg p-3 mt-1 w-full bg-slate-50"
             >
               <option value="">Pilih wallet</option>
@@ -236,6 +275,8 @@ export default function GoalForm({
       {/* ================================
           ACTION BUTTONS
       ================================= */}
+      {error && <p className="text-sm text-red-600">{error}</p>}
+
       <div className="flex justify-end gap-3 pt-4">
         <button
           type="button"
