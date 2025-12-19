@@ -141,6 +141,7 @@ export default function Loan() {
     amount: "",
     note: "",
     wallet_id: "",
+    paid_at: "",
   });
 
   /* FORMAT INPUT --------------------------------------------------- */
@@ -250,6 +251,9 @@ export default function Loan() {
   const savePayment = async () => {
     if (!payment.wallet_id) return alert("Pilih wallet");
     if (!payment.amount) return alert("Jumlah bayar wajib diisi");
+    if (payment.paid_at && new Date(payment.paid_at) > new Date()) {
+      return alert("Tanggal tidak boleh di masa depan");
+    }
 
     const user = (await supabase.auth.getUser()).data.user;
     const cleanAmount = Number(unformatNumber(payment.amount));
@@ -261,6 +265,7 @@ export default function Loan() {
           amount: cleanAmount,
           wallet_id: payment.wallet_id,
           note: payment.note || null,
+          paid_at: payment.paid_at || null,
         })
         .eq("id", editingPayment.id);
     } else {
@@ -270,11 +275,13 @@ export default function Loan() {
         amount: cleanAmount,
         wallet_id: payment.wallet_id,
         note: payment.note || null,
+        paid_at: payment.paid_at || new Date().toISOString(),
       });
     }
 
     setOpenPay(false);
     setIsEditPayment(false);
+    setEditingPayment(null);
     fetchAll();
   };
 
@@ -440,7 +447,13 @@ export default function Loan() {
                           onClick={() => {
                             setSelectedDebt(item);
                             setIsEditPayment(false);
-                            setPayment({ amount: "", note: "", wallet_id: "" });
+                            setEditingPayment(null);
+                            setPayment({
+                              amount: "",
+                              note: "",
+                              wallet_id: "",
+                              paid_at: new Date().toISOString().slice(0, 10),
+                            });
                             setOpenPay(true);
                           }}
                           className="text-green-600 flex items-center gap-1 text-sm"
@@ -488,50 +501,63 @@ export default function Loan() {
                         </p>
                       )}
 
-                      {(item.debt_payments || []).map((p) => (
-                        <div
-                          key={p.id}
-                          className="p-2 rounded bg-white border flex justify-between items-center"
-                        >
-                          <div>
-                            <p>{fmt(p.amount)}</p>
-                            {p.note && (
-                              <p className="text-xs text-gray-500">{p.note}</p>
-                            )}
-                            <p className="text-xs">
-                              {new Date(
-                                p.paid_at || p.created_at
-                              ).toLocaleString()}
-                            </p>
-                          </div>
+                      {(item.debt_payments || [])
+                        .sort(
+                          (a, b) =>
+                            new Date(b.paid_at || b.created_at) -
+                            new Date(a.paid_at || a.created_at)
+                        )
+                        .map((p) => (
+                          <div
+                            key={p.id}
+                            className="p-2 rounded bg-white border flex justify-between items-start"
+                          >
+                            <div>
+                              <p className="font-medium">{fmt(p.amount)}</p>
 
-                          <div className="flex flex-col gap-1">
-                            <button
-                              onClick={() => {
-                                setSelectedDebt(item);
-                                setIsEditPayment(true);
-                                setEditingPayment(p);
-                                setPayment({
-                                  amount: formatNumber(p.amount),
-                                  note: p.note || "",
-                                  wallet_id: p.wallet_id,
-                                });
-                                setOpenPay(true);
-                              }}
-                              className="text-blue-600 text-xs"
-                            >
-                              Edit
-                            </button>
+                              <p className="text-xs text-gray-500">
+                                {new Date(
+                                  p.paid_at || p.created_at
+                                ).toLocaleDateString("id-ID")}
+                              </p>
 
-                            <button
-                              onClick={() => deletePayment(p.id)}
-                              className="text-red-600 text-xs"
-                            >
-                              Hapus
-                            </button>
+                              {p.note && (
+                                <p className="mt-1 text-xs italic text-slate-600">
+                                  “{p.note}”
+                                </p>
+                              )}
+                            </div>
+
+                            <div className="flex flex-col gap-1">
+                              <button
+                                onClick={() => {
+                                  setSelectedDebt(item);
+                                  setIsEditPayment(true);
+                                  setEditingPayment(p);
+                                  setPayment({
+                                    amount: formatNumber(p.amount),
+                                    note: p.note || "",
+                                    wallet_id: p.wallet_id,
+                                    paid_at: p.paid_at
+                                      ? p.paid_at.slice(0, 10)
+                                      : p.created_at.slice(0, 10),
+                                  });
+                                  setOpenPay(true);
+                                }}
+                                className="text-blue-600 text-xs"
+                              >
+                                Edit
+                              </button>
+
+                              <button
+                                onClick={() => deletePayment(p.id)}
+                                className="text-red-600 text-xs"
+                              >
+                                Hapus
+                              </button>
+                            </div>
                           </div>
-                        </div>
-                      ))}
+                        ))}
                     </div>
                   </div>
                 </SortableDebtCard>
@@ -609,6 +635,7 @@ export default function Loan() {
               />
 
               <input
+                required
                 type="date"
                 className="border p-2 rounded w-full"
                 value={form.due_date}
@@ -618,8 +645,10 @@ export default function Loan() {
               <textarea
                 placeholder="Catatan"
                 className="border p-2 rounded w-full"
-                value={form.note}
-                onChange={(e) => setForm({ ...form, note: e.target.value })}
+                value={payment.note}
+                onChange={(e) =>
+                  setPayment({ ...payment, note: e.target.value })
+                }
                 onKeyDown={(e) => {
                   if (e.key === "Enter") e.stopPropagation();
                 }}
@@ -670,7 +699,14 @@ export default function Loan() {
                   </option>
                 ))}
               </select>
-
+              <input
+                type="date"
+                className="border p-2 rounded w-full"
+                value={payment.paid_at}
+                onChange={(e) =>
+                  setPayment({ ...payment, paid_at: e.target.value })
+                }
+              />
               <input
                 type="text"
                 placeholder="Jumlah bayar"
@@ -681,8 +717,10 @@ export default function Loan() {
                   if (!/^\d*$/.test(raw)) return;
                   setPayment({ ...payment, amount: formatNumber(raw) });
                 }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") e.stopPropagation();
+                }}
               />
-
               <textarea
                 placeholder="Catatan"
                 className="border p-2 rounded w-full"
@@ -690,6 +728,9 @@ export default function Loan() {
                 onChange={(e) =>
                   setPayment({ ...payment, note: e.target.value })
                 }
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") e.stopPropagation();
+                }}
               />
 
               <button

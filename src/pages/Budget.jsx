@@ -51,6 +51,10 @@ function fmtInput(v) {
   if (!digits) return "";
   return new Intl.NumberFormat("id-ID").format(Number(digits));
 }
+function calcPercentFromAmount(amount, base) {
+  if (!amount || !base) return 0;
+  return Math.round((Number(amount) / Number(base)) * 100);
+}
 
 /* =========================
    Sortable Card (dnd-kit)
@@ -532,7 +536,10 @@ export default function Budget() {
             </div>
             <div className="text-xs text-slate-500">
               {isExpense
-                ? `Alokasi: ${formatRupiah(allocated)}`
+                ? `Alokasi: ${formatRupiah(allocated)} (${calcPercentFromAmount(
+                    allocated,
+                    totalIncome
+                  )}%)`
                 : "Income Category"}
             </div>
           </div>
@@ -575,7 +582,10 @@ export default function Budget() {
                           {s.name}
                         </div>
                         <div className="text-xs text-slate-500">
-                          {s.percent ? `${s.percent}%` : ""} •{" "}
+                          {s.percent != null
+                            ? `${s.percent}%`
+                            : `${calcPercentFromAmount(val, allocated)}%`}
+                          {" • "}
                           {formatRupiah(val)}
                         </div>
                       </div>
@@ -814,7 +824,11 @@ export default function Budget() {
                               {c.category}
                             </div>
                             <div className="text-xs text-slate-500">
-                              Alokasi: {formatRupiah(allocated)}
+                              Alokasi: {formatRupiah(allocated)}{" "}
+                              <span className="font-medium">
+                                ({calcPercentFromAmount(allocated, totalIncome)}
+                                %)
+                              </span>
                             </div>
                           </div>
 
@@ -868,7 +882,13 @@ export default function Budget() {
                                       {s.name}
                                     </div>
                                     <div className="text-xs text-slate-500">
-                                      {s.percent ? `${s.percent}%` : ""} •{" "}
+                                      {s.percent != null
+                                        ? `${s.percent}%`
+                                        : `${calcPercentFromAmount(
+                                            val,
+                                            allocated
+                                          )}%`}
+                                      {" • "}
                                       {formatRupiah(val)}
                                     </div>
                                   </div>

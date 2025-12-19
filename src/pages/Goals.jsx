@@ -32,7 +32,22 @@ import {
 /* THEME */
 const NAVY = "#052A3D";
 const GOLD = "#E8C174";
-const CARD_BG = "bg-gradient-to-br from-[#F7FAFC] to-[#EBF0F6]"; // Soft fintech blue
+const CARD_BG = "bg-gradient-to-br from-[#F7FAFC] to-[#EBF0F6]";
+
+const PRIORITY_STYLES = {
+  low: {
+    ring: "ring-1 ring-slate-200",
+    badge: "bg-slate-100 text-slate-700",
+  },
+  medium: {
+    ring: "ring-1 ring-[#E8C174]/60",
+    badge: "bg-[#FFF4D6] text-[#9A6B00]",
+  },
+  high: {
+    ring: "ring-2 ring-red-400",
+    badge: "bg-red-100 text-red-700",
+  },
+};
 
 const formatRupiah = (n) => formatRupiahUtil(n);
 
@@ -170,6 +185,7 @@ export default function Goals() {
       saved,
       progress,
       eta: etaLabel,
+      priority: goal.priority,
     });
   };
 
@@ -182,6 +198,7 @@ export default function Goals() {
 
     const oldIndex = goals.findIndex((g) => g.id === active.id);
     const newIndex = goals.findIndex((g) => g.id === over.id);
+
     const arranged = arrayMove(goals, oldIndex, newIndex);
     setGoals(arranged);
 
@@ -269,13 +286,15 @@ export default function Goals() {
                   savingAmount: Number(g.saving_amount || 0),
                   frequency: g.saving_frequency || "weekly",
                 });
+                const priorityStyle = PRIORITY_STYLES[g.priority || "medium"];
 
                 return (
                   <SortableGoalCard key={g.id} id={g.id}>
                     {() => (
                       <div
                         className={`relative rounded-2xl shadow-sm p-6 group h-[220px] flex flex-col justify-between 
-                        ${CARD_BG} text-[#052A3D] hover:shadow-lg transition`}
+                        ${CARD_BG} text-[#052A3D] hover:shadow-lg transition
+                        ${priorityStyle.ring}`}
                       >
                         {/* HANDLE */}
                         <div className="absolute left-3 top-3 opacity-40 group-hover:opacity-80 transition cursor-grab">
@@ -329,6 +348,13 @@ export default function Goals() {
                           <h3 className="text-lg font-bold truncate mb-1">
                             {g.name}
                           </h3>
+                          <span
+                            className={`inline-block text-[10px] px-2 py-0.5 rounded-full font-medium mb-2 
+                            ${priorityStyle.badge}`}
+                          >
+                            {g.priority?.toUpperCase() || "MEDIUM"}
+                          </span>
+
                           <p className="text-xs text-slate-600 line-clamp-2">
                             {g.description}
                           </p>
@@ -357,7 +383,12 @@ export default function Goals() {
                           </div>
 
                           <div className="flex justify-between text-xs text-slate-600">
-                            <span>{formatRupiah(saved)}</span>
+                            <span>
+                              {formatRupiah(saved)}{" "}
+                              <span className="text-slate-400">
+                                / {formatRupiah(target)}
+                              </span>
+                            </span>
                             <span>ETA: {etaLabel || "-"}</span>
                           </div>
                         </div>
@@ -371,46 +402,64 @@ export default function Goals() {
 
           {/* DRAG OVERLAY */}
           <DragOverlay>
-            {activeGoal && (
-              <div
-                className={`w-[280px] rounded-2xl shadow-xl p-6 h-[220px] 
-                ${CARD_BG} border flex flex-col justify-between`}
-              >
-                <h3 className="text-lg font-bold truncate mb-1">
-                  {activeGoal.name}
-                </h3>
-                <p className="text-xs text-slate-600">
-                  {activeGoal.description}
-                </p>
+            {activeGoal &&
+              (() => {
+                const overlayStyle =
+                  PRIORITY_STYLES[activeGoal.priority || "medium"];
 
-                <div>
-                  <div className="flex justify-between text-xs text-slate-600 mb-2">
-                    <span>Saved</span>
-                    <span>{activeGoal.progress}%</span>
-                  </div>
+                return (
+                  <div
+                    className={`w-[280px] rounded-2xl shadow-xl p-6 h-[220px] 
+          ${CARD_BG} border flex flex-col justify-between
+          ${overlayStyle.ring}`}
+                  >
+                    <span
+                      className={`inline-block text-[10px] px-2 py-0.5 rounded-full font-medium mb-2 
+            ${overlayStyle.badge}`}
+                    >
+                      {activeGoal.priority?.toUpperCase() || "MEDIUM"}
+                    </span>
 
-                  <div className="w-full h-3 bg-slate-200 rounded-full overflow-hidden mb-3">
-                    <div
-                      className="h-full rounded-full"
-                      style={{
-                        width: `${activeGoal.progress}%`,
-                        background:
-                          activeGoal.progress >= 100
-                            ? "#16a34a"
-                            : activeGoal.progress >= 50
-                            ? GOLD
-                            : NAVY,
-                      }}
-                    />
-                  </div>
+                    <h3 className="text-lg font-bold truncate mb-1">
+                      {activeGoal.name}
+                    </h3>
 
-                  <div className="flex justify-between text-xs text-slate-600">
-                    <span>{formatRupiah(activeGoal.saved)}</span>
-                    <span>ETA: {activeGoal.eta || "-"}</span>
+                    <p className="text-xs text-slate-600">
+                      {activeGoal.description}
+                    </p>
+
+                    <div>
+                      <div className="flex justify-between text-xs text-slate-600 mb-2">
+                        <span>Saved</span>
+                        <span>{activeGoal.progress}%</span>
+                      </div>
+
+                      <div className="w-full h-3 bg-slate-200 rounded-full overflow-hidden mb-3">
+                        <div
+                          className="h-full rounded-full"
+                          style={{
+                            width: `${activeGoal.progress}%`,
+                            background:
+                              activeGoal.progress >= 100
+                                ? "#16a34a"
+                                : activeGoal.progress >= 50
+                                ? GOLD
+                                : NAVY,
+                          }}
+                        />
+                      </div>
+
+                      <div className="flex justify-between text-xs text-slate-600">
+                        <span>
+                          {formatRupiah(activeGoal.saved)} /{" "}
+                          {formatRupiah(activeGoal.target_amount)}
+                        </span>
+                        <span>ETA: {activeGoal.eta || "-"}</span>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
-            )}
+                );
+              })()}
           </DragOverlay>
         </DndContext>
       )}
