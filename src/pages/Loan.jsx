@@ -52,7 +52,13 @@ function SortableDebtCard({ id, children }) {
   };
 
   return (
-    <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
+    <div
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      {...listeners}
+      className="w-full max-w-full overflow-hidden"
+    >
       {children}
     </div>
   );
@@ -73,10 +79,11 @@ function DragCard({ item, wallets }) {
   return (
     <div
       className={`
-        w-[320px] p-5 rounded-xl shadow-2xl border 
-        ${item.type === "hutang" ? softRed : softGreen}
-      `}
-      style={{ transform: "scale(1.05)" }}
+    w-[90vw] max-w-[320px]
+    p-5 rounded-xl shadow-2xl border 
+    ${item.type === "hutang" ? softRed : softGreen}
+  `}
+      style={{ transform: "scale(1.03)" }}
     >
       <div className="flex items-start justify-between mb-3">
         <div>
@@ -328,7 +335,7 @@ export default function Loan() {
      RENDER
   ------------------------------------------------------------------- */
   return (
-    <div className="w-full p-4 pb-24 space-y-4">
+    <div className="w-full overflow-x-hidden space-y-4">
       {/* SUMMARY */}
       <div className="grid grid-cols-2 gap-4">
         <div className="p-4 rounded-xl shadow bg-[#FDECEC] text-red-700">
@@ -388,7 +395,7 @@ export default function Loan() {
           items={items.map((v) => v.id)}
           strategy={rectSortingStrategy}
         >
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
             {items.map((item) => {
               const paid = (item.debt_payments || []).reduce(
                 (s, p) => s + Number(p.amount || 0),
@@ -404,7 +411,7 @@ export default function Loan() {
                       ${item.type === "hutang" ? softRed : softGreen}
                     `}
                   >
-                    <div className="flex justify-between">
+                    <div className="flex flex-col sm:flex-row sm:justify-between gap-3">
                       {/* LEFT */}
                       <div>
                         <p
@@ -440,52 +447,87 @@ export default function Loan() {
                       </div>
 
                       {/* ACTIONS */}
-                      <div className="flex flex-col gap-1 items-end">
-                        <GripVertical className="opacity-40 mb-2" />
+                      <div
+                        className="
+    flex flex-row justify-between items-center mt-3
+    sm:mt-0
+    sm:flex-col sm:items-end sm:justify-start sm:gap-1
+  "
+                      >
+                        {/* LEFT (Mobile) / TOP (Desktop) */}
+                        <div className="sm:mb-2">
+                          <GripVertical className="opacity-40" />
+                        </div>
 
-                        <button
-                          onClick={() => {
-                            setSelectedDebt(item);
-                            setIsEditPayment(false);
-                            setEditingPayment(null);
-                            setPayment({
-                              amount: "",
-                              note: "",
-                              wallet_id: "",
-                              paid_at: new Date().toISOString().slice(0, 10),
-                            });
-                            setOpenPay(true);
-                          }}
-                          className="text-green-600 flex items-center gap-1 text-sm"
+                        {/* ACTION BUTTONS */}
+                        <div
+                          className="
+      flex items-center gap-2
+      sm:flex-col sm:items-end
+    "
                         >
-                          <CreditCard size={16} /> Bayar
-                        </button>
+                          {/* BAYAR – PRIMARY */}
+                          <button
+                            onClick={() => {
+                              setSelectedDebt(item);
+                              setIsEditPayment(false);
+                              setEditingPayment(null);
+                              setPayment({
+                                amount: "",
+                                note: "",
+                                wallet_id: "",
+                                paid_at: new Date().toISOString().slice(0, 10),
+                              });
+                              setOpenPay(true);
+                            }}
+                            className="
+        flex items-center gap-1
+        px-3 py-1.5 rounded-lg
+        text-sm font-medium
+        bg-green-100 text-green-700
+        hover:bg-green-200
+      "
+                          >
+                            <CreditCard size={16} />
+                            Bayar
+                          </button>
 
-                        <button
-                          onClick={() => {
-                            setIsEdit(true);
-                            setForm({
-                              id: item.id,
-                              type: item.type,
-                              name: item.name,
-                              amount: formatNumber(item.amount),
-                              due_date: item.due_date,
-                              note: item.note,
-                              wallet_id: item.wallet_id,
-                            });
-                            setOpenForm(true);
-                          }}
-                          className="text-blue-600 text-sm"
-                        >
-                          <Edit size={18} />
-                        </button>
+                          {/* EDIT */}
+                          <button
+                            onClick={() => {
+                              setIsEdit(true);
+                              setForm({
+                                id: item.id,
+                                type: item.type,
+                                name: item.name,
+                                amount: formatNumber(item.amount),
+                                due_date: item.due_date,
+                                note: item.note,
+                                wallet_id: item.wallet_id,
+                              });
+                              setOpenForm(true);
+                            }}
+                            className="
+                              p-2 rounded-lg
+                              text-blue-600 hover:bg-blue-100
+                            "
+                            aria-label="Edit"
+                          >
+                            <Edit size={18} />
+                          </button>
 
-                        <button
-                          onClick={() => deleteDebt(item.id)}
-                          className="text-red-600 text-sm"
-                        >
-                          <Trash2 size={18} />
-                        </button>
+                          {/* DELETE */}
+                          <button
+                            onClick={() => deleteDebt(item.id)}
+                            className="
+                              p-2 rounded-lg
+                              text-red-600 hover:bg-red-100
+                            "
+                            aria-label="Hapus"
+                          >
+                            <Trash2 size={18} />
+                          </button>
+                        </div>
                       </div>
                     </div>
 
@@ -575,7 +617,7 @@ export default function Loan() {
       {/* ============= FORM MODAL ============= */}
       {openForm && (
         <div className="fixed inset-0 bg-black/20 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white p-6 w-80 rounded-xl shadow relative">
+          <div className="bg-white p-6 w-full max-w-md rounded-xl shadow relative">
             <button
               className="absolute top-2 right-2"
               onClick={() => setOpenForm(false)}

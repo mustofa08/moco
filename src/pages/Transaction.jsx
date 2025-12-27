@@ -9,6 +9,7 @@ import {
   Search as SearchIcon,
   Wallet,
   ArrowRightLeft,
+  Clock,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
@@ -35,6 +36,7 @@ export default function Transaction() {
       if (!user) return;
 
       await loadTransactions();
+      await loadTotalWalletBalance();
 
       const channel = supabase
         .channel(`transactions-sync-${user.id}`)
@@ -50,33 +52,14 @@ export default function Transaction() {
         )
         .subscribe();
 
-      // sync debts because could affect categories/wallets
-      const subs = [
-        supabase
-          .channel("debts")
-          .on("postgres_changes", { event: "*", table: "debts" }, () =>
-            mounted ? loadTransactions() : null
-          )
-          .subscribe(),
-        supabase
-          .channel("debt_payments")
-          .on(
-            "postgres_changes",
-            { event: "*", table: "debt_payments" },
-            () => mounted && loadTransactions()
-          )
-          .subscribe(),
-      ];
-
       return () => {
         mounted = false;
         supabase.removeChannel(channel);
-        subs.forEach((s) => supabase.removeChannel(s));
       };
     }
 
     init();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line
   }, [month, year, search, walletFilter]);
 
   /* --------------------------------------------
@@ -96,7 +79,7 @@ export default function Transaction() {
       .from("transactions")
       .select(
         `
-        id, date, created_at, type, amount, note,
+        id, date, time, created_at, type, amount, note,
         wallet_id, wallet:wallet_id(name),
         transfer_from, from_wallet:transfer_from(name),
         transfer_to_id, to_wallet:transfer_to_id(name),
@@ -108,11 +91,13 @@ export default function Transaction() {
       .gte("date", start)
       .lte("date", end)
       .order("date", { ascending: false })
+      .order("time", { ascending: false })
       .order("created_at", { ascending: false });
 
     const cleaned = (data || []).map((tx) => ({
       ...tx,
       date: String(tx.date).slice(0, 10),
+      time: tx.time ? tx.time.slice(0, 5) : "00:00",
       walletName: tx.wallet?.name || "-",
       walletFromName: tx.from_wallet?.name || "-",
       walletToName: tx.to_wallet?.name || "-",
@@ -156,6 +141,11 @@ export default function Transaction() {
       byDate[tx.date].push(tx);
     });
 
+    // 🔥 SORT BY TIME DESC PER DAY
+    Object.keys(byDate).forEach((d) => {
+      byDate[d].sort((a, b) => b.time.localeCompare(a.time));
+    });
+
     setGrouped(
       Object.fromEntries(
         Object.entries(byDate).sort(([a], [b]) => new Date(b) - new Date(a))
@@ -180,7 +170,24 @@ export default function Transaction() {
     .filter((t) => t.type === "expense")
     .reduce((a, b) => a + Number(b.amount || 0), 0);
 
-  const netTotal = incomeSum - expenseSum;
+  const [totalWalletBalance, setTotalWalletBalance] = useState(0);
+
+  async function loadTotalWalletBalance() {
+    const user = (await supabase.auth.getUser()).data.user;
+    if (!user) return;
+
+    const { data } = await supabase
+      .from("wallet_balance_view")
+      .select("balance")
+      .eq("user_id", user.id);
+
+    const total = (data || []).reduce(
+      (sum, w) => sum + Number(w.balance || 0),
+      0
+    );
+
+    setTotalWalletBalance(total);
+  }
 
   const walletOptions = useMemo(() => {
     const map = {};
@@ -197,55 +204,42 @@ export default function Transaction() {
   });
 
   /* --------------------------------------------
-     UI RENDER
+     UI
   -------------------------------------------- */
   return (
     <div className="min-h-screen p-4 pb-24 bg-[#F3F7FA] dark:bg-slate-900">
-      {/* ----------------- HEADER ----------------- */}
+      {/* HEADER */}
       <div className="sticky top-0 z-20 pb-4 bg-[#F3F7FA] dark:bg-slate-900">
         <div className="bg-white dark:bg-slate-800 rounded-xl shadow p-4 flex items-center justify-between">
-          <button
-            onClick={() => setMonth(month === 1 ? 12 : month - 1)}
-            className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700"
-          >
-            <ChevronLeft className="text-slate-700 dark:text-white" size={24} />
+          <button onClick={() => setMonth(month === 1 ? 12 : month - 1)}>
+            <ChevronLeft size={24} />
           </button>
 
-          <h1 className="text-xl font-bold text-slate-800 dark:text-white">
+          <h1 className="text-xl font-bold">
             {monthName} {year}
           </h1>
 
-          <button
-            onClick={() => setMonth(month === 12 ? 1 : month + 1)}
-            className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700"
-          >
-            <ChevronRight
-              className="text-slate-700 dark:text-white"
-              size={24}
-            />
+          <button onClick={() => setMonth(month === 12 ? 1 : month + 1)}>
+            <ChevronRight size={24} />
           </button>
         </div>
 
-        {/* Search & Filter */}
+        {/* SEARCH */}
         <div className="flex gap-3 mt-4">
           <div className="relative flex-1">
             <SearchIcon className="absolute left-3 top-2.5 text-slate-400" />
             <input
-              type="text"
-              placeholder="Cari catatan, kategori, wallet…"
+              placeholder="Cari transaksi…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-full pl-10 p-2 rounded-lg border bg-white dark:bg-slate-800 dark:text-white shadow-sm"
+              className="w-full pl-10 p-2 rounded-lg border"
             />
           </div>
 
           <select
             value={walletFilter}
             onChange={(e) => setWalletFilter(e.target.value)}
-            className="
-              p-2 rounded-lg border bg-white dark:bg-slate-800 dark:text-white 
-              shadow-sm cursor-pointer
-            "
+            className="p-2 rounded-lg border"
           >
             <option value="all">Semua Wallet</option>
             {walletOptions.map((w) => (
@@ -257,50 +251,46 @@ export default function Transaction() {
         </div>
       </div>
 
-      {/* ----------------- SUMMARY ----------------- */}
+      {/* SUMMARY */}
       <div className="grid grid-cols-3 gap-3 mt-2">
         <Summary label="Income" color="text-green-600" value={incomeSum} />
         <Summary label="Expense" color="text-red-500" value={expenseSum} />
         <Summary
-          label="Total"
-          color="text-slate-700 dark:text-white"
-          value={netTotal}
+          label="Uang Saat Ini"
+          color="text-blue-600"
+          value={totalWalletBalance}
         />
       </div>
 
-      {/* ----------------- LIST ----------------- */}
+      {/* LIST */}
       <div className="mt-6 space-y-6">
         {Object.entries(grouped).map(([date, txs]) => (
           <div key={date}>
-            <p className="font-semibold text-slate-700 dark:text-slate-300 mb-1">
+            <p className="font-semibold text-slate-700 mb-1">
               {new Date(date).getDate()} {monthName}
             </p>
 
-            <div className="overflow-hidden rounded-xl bg-white dark:bg-slate-800 shadow">
+            <div className="rounded-xl bg-white shadow">
               {txs.map((tx) => (
                 <div
                   key={tx.id}
-                  className="
-                    p-4 flex justify-between items-center 
-                    hover:bg-slate-50 dark:hover:bg-slate-700 
-                    transition group
-                  "
+                  className="p-4 flex justify-between items-center hover:bg-slate-50 group"
                 >
-                  {/* LEFT */}
                   <div>
-                    <p className="text-sm font-medium text-slate-800 dark:text-white">
+                    <p className="text-sm font-medium">
                       {tx.note || "(Tanpa catatan)"}
                     </p>
 
                     <p className="text-xs text-slate-500 flex items-center gap-1">
+                      <Clock size={12} /> {tx.time}
                       {tx.type === "transfer" ? (
                         <>
-                          <ArrowRightLeft size={14} /> {tx.walletFromName} →
+                          <ArrowRightLeft size={12} /> {tx.walletFromName} →
                           {tx.walletToName}
                         </>
                       ) : (
                         <>
-                          <Wallet size={14} />
+                          <Wallet size={12} />
                           {tx.categoryName}
                           {tx.type === "expense" &&
                             tx.subcategoryName !== "-" &&
@@ -310,15 +300,14 @@ export default function Transaction() {
                     </p>
                   </div>
 
-                  {/* RIGHT */}
                   <div className="text-right">
                     <p
                       className={`font-semibold ${
-                        tx.type === "transfer"
-                          ? "text-slate-700 dark:text-white"
-                          : tx.type === "income"
+                        tx.type === "income"
                           ? "text-green-600"
-                          : "text-red-500"
+                          : tx.type === "expense"
+                          ? "text-red-500"
+                          : "text-slate-700"
                       }`}
                     >
                       {tx.type === "income"
@@ -329,15 +318,14 @@ export default function Transaction() {
                       Rp {Number(tx.amount).toLocaleString()}
                     </p>
 
-                    <div className="opacity-0 group-hover:opacity-100 flex gap-3 justify-end mt-1 transition">
+                    <div className="opacity-0 group-hover:opacity-100 flex gap-3 justify-end mt-1">
                       <button
                         onClick={() => navigate(`/transaction/edit/${tx.id}`)}
                       >
-                        <Edit size={16} className="text-blue-500" />
+                        <Edit size={16} />
                       </button>
-
                       <button onClick={() => deleteTx(tx.id)}>
-                        <Trash2 size={16} className="text-red-500" />
+                        <Trash2 size={16} />
                       </button>
                     </div>
                   </div>
@@ -348,14 +336,10 @@ export default function Transaction() {
         ))}
       </div>
 
-      {/* ADD BUTTON */}
+      {/* ADD */}
       <button
         onClick={() => navigate("/transaction/add")}
-        className="
-          fixed bottom-20 right-4 bg-blue-600 hover:bg-blue-700 
-          text-white p-4 rounded-full shadow-lg active:scale-95 
-          transition z-50
-        "
+        className="fixed bottom-20 right-4 bg-blue-600 text-white p-4 rounded-full shadow-lg"
       >
         <Plus size={22} />
       </button>
@@ -363,13 +347,10 @@ export default function Transaction() {
   );
 }
 
-/* --------------------------------------------
-   SUMMARY CARD COMPONENT
--------------------------------------------- */
 function Summary({ label, value, color }) {
   return (
-    <div className="text-center rounded-xl p-3 bg-white dark:bg-slate-800 shadow">
-      <p className="text-xs text-slate-500 dark:text-slate-400">{label}</p>
+    <div className="text-center rounded-xl p-3 bg-white shadow">
+      <p className="text-xs text-slate-500">{label}</p>
       <p className={`font-semibold ${color}`}>
         Rp {Number(value).toLocaleString()}
       </p>
