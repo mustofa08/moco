@@ -1,4 +1,3 @@
-// src/components/forms/TransactionForm.jsx
 import { useEffect, useState } from "react";
 import { supabase } from "../../lib/supabaseClient";
 
@@ -9,9 +8,15 @@ export default function TransactionForm({
   editId = null,
 }) {
   const [tab, setTab] = useState(defaultType);
+
+  const now = new Date();
   const [date, setDate] = useState(
-    initialDate || new Date().toISOString().slice(0, 10)
+    initialDate || now.toISOString().slice(0, 10)
   );
+  const [time, setTime] = useState(
+    now.toTimeString().slice(0, 5) // HH:mm
+  );
+
   const [amountDisplay, setAmountDisplay] = useState("");
   const [note, setNote] = useState("");
 
@@ -39,6 +44,26 @@ export default function TransactionForm({
     if (editId) loadEditData();
   }, [editId]);
 
+  /* ------------------------------------------
+      KEYBOARD SHORTCUT
+  ------------------------------------------ */
+  useEffect(() => {
+    function handleKey(e) {
+      if (e.key === "Escape") {
+        onSaved(); // close / back
+      }
+
+      if (e.key === "Enter") {
+        if (e.target.tagName === "TEXTAREA") return;
+        e.preventDefault();
+        handleSave();
+      }
+    }
+
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  });
+
   async function loadInitial() {
     const user = (await supabase.auth.getUser()).data.user;
     if (!user) return;
@@ -65,9 +90,6 @@ export default function TransactionForm({
   }
 
   async function loadEditData() {
-    const user = (await supabase.auth.getUser()).data.user;
-    if (!user) return;
-
     const { data } = await supabase
       .from("transactions")
       .select("*")
@@ -78,6 +100,7 @@ export default function TransactionForm({
 
     setTab(data.type);
     setDate(data.date);
+    setTime(data.time || "00:00");
     setAmountDisplay(new Intl.NumberFormat("id-ID").format(data.amount));
     setNote(data.note || "");
 
@@ -134,13 +157,30 @@ export default function TransactionForm({
     if (!user) return;
 
     const amount = parseNumber(amountDisplay);
-    if (!amount) return alert("Nominal tidak valid");
+
+    // VALIDATION
+    if (!date) return alert("Tanggal wajib diisi");
+    if (!time) return alert("Jam wajib diisi");
+    if (!amount || amount <= 0) return alert("Nominal wajib diisi");
+
+    if (tab === "transfer") {
+      if (!transferFrom || !transferTo)
+        return alert("Wallet asal & tujuan wajib dipilih");
+      if (transferFrom === transferTo)
+        return alert("Wallet asal dan tujuan tidak boleh sama");
+    } else {
+      if (!walletId) return alert("Wallet wajib dipilih");
+      if (!categoryId) return alert("Kategori wajib dipilih");
+      if (tab === "expense" && !subcategoryId)
+        return alert("Subkategori wajib dipilih");
+    }
 
     setLoading(true);
 
     const payload = {
       user_id: user.id,
       date,
+      time,
       amount,
       note,
       type: tab,
@@ -154,8 +194,8 @@ export default function TransactionForm({
       payload.subcategory_id = null;
     } else {
       payload.wallet_id = walletId;
-      payload.category_id = categoryId || null;
-      payload.subcategory_id = tab === "expense" ? subcategoryId || null : null;
+      payload.category_id = categoryId;
+      payload.subcategory_id = tab === "expense" ? subcategoryId : null;
     }
 
     try {
@@ -195,14 +235,9 @@ export default function TransactionForm({
           <button
             key={t.key}
             onClick={() => setTab(t.key)}
-            className={`
-              flex-1 py-2 rounded-lg text-sm font-medium transition
-              ${
-                tab === t.key
-                  ? `${activeColor[t.key]} shadow`
-                  : "text-slate-600"
-              }
-            `}
+            className={`flex-1 py-2 rounded-lg text-sm font-medium transition ${
+              tab === t.key ? `${activeColor[t.key]} shadow` : "text-slate-600"
+            }`}
           >
             {t.label}
           </button>
@@ -211,15 +246,27 @@ export default function TransactionForm({
 
       {/* ---------- FORM CARD ---------- */}
       <div className="p-5 rounded-2xl shadow border bg-white space-y-4">
-        {/* DATE */}
-        <div>
-          <label className="text-sm text-slate-600">Tanggal</label>
-          <input
-            type="date"
-            value={date}
-            onChange={(e) => setDate(e.target.value)}
-            className="w-full mt-1 px-3 py-2 rounded-lg border bg-slate-50"
-          />
+        {/* DATE + TIME */}
+        <div className="flex gap-3">
+          <div className="flex-1">
+            <label className="text-sm text-slate-600">Tanggal</label>
+            <input
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              className="w-full mt-1 px-3 py-2 rounded-lg border bg-slate-50"
+            />
+          </div>
+
+          <div className="w-32">
+            <label className="text-sm text-slate-600">Jam</label>
+            <input
+              type="time"
+              value={time}
+              onChange={(e) => setTime(e.target.value)}
+              className="w-full mt-1 px-3 py-2 rounded-lg border bg-slate-50"
+            />
+          </div>
         </div>
 
         {/* NOMINAL */}
@@ -233,10 +280,7 @@ export default function TransactionForm({
               value={amountDisplay}
               onChange={onChangeAmount}
               inputMode="numeric"
-              className="
-                w-full pl-10 pr-3 py-2 rounded-lg border bg-slate-50 
-                text-right font-medium text-slate-700 focus:outline-none
-              "
+              className="w-full pl-10 pr-3 py-2 rounded-lg border bg-slate-50 text-right font-medium"
               placeholder="0"
             />
           </div>
@@ -355,10 +399,7 @@ export default function TransactionForm({
         <button
           onClick={handleSave}
           disabled={loading}
-          className="
-            w-full py-3 rounded-xl bg-[#052A3D] text-white 
-            font-semibold hover:bg-[#083a52] transition
-          "
+          className="w-full py-3 rounded-xl bg-[#052A3D] text-white font-semibold"
         >
           {loading ? "Menyimpan..." : editId ? "Update" : "Simpan"}
         </button>
