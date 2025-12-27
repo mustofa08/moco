@@ -189,7 +189,26 @@ export default function Wallets() {
 
   async function deleteWallet(id) {
     if (!confirm("Hapus wallet?")) return;
-    await supabase.from("wallets").delete().eq("id", id);
+
+    const { error } = await supabase.from("wallets").delete().eq("id", id);
+
+    if (error) {
+      if (error.code === "23503") {
+        if (error.code === "23503") {
+          alert(
+            "Wallet ini masih digunakan oleh transaksi, hutang, atau goals.\n" +
+              "Pindahkan data terlebih dahulu."
+          );
+        }
+
+        return;
+      }
+
+      alert("Gagal menghapus wallet");
+      console.error(error);
+      return;
+    }
+
     fetchWallets();
   }
 
